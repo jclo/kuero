@@ -1,0 +1,53 @@
+#!/bin/bash
+
+[ -f /etc/lxc/container.conf ] && source /etc/lxc/container.conf
+
+case "$1" in
+  start)
+    echo " "
+    echo "Starting Lxc containers ..."
+    sleep 1s
+    for container in "${CONTAINERS_UP[@]}"; do
+       if [ "${container}" = "${container#!}" ]; then
+         echo -e "Starting Linux container ${container}\c"
+         /usr/bin/screen -dmS init-${container} /usr/bin/lxc-start -n ${container}
+         lxc-wait --name=${container} --state=RUNNING
+         if [  $? -gt 0 ]; then
+           echo " ... ${container} failed to start!"
+         else
+           echo " ... ${container} started!"
+         fi
+       fi
+    done
+    ;;
+
+  stop)
+    echo " "
+    echo "Stopping containers ..."
+    sleep 1s
+    for container in "${CONTAINERS_DOWN[@]}"; do
+      if [ "${container}" = "${container#!}" ]; then
+       echo -e "Stopping Linux container ${container}\c"
+       /usr/bin/lxc-stop -n ${container}
+       sleep 1s
+       if [  $? -gt 0 ]; then
+         echo " ... ${container} failed to stop!"
+       else
+         echo " ... ${container} stopped!"
+       fi
+      fi
+    done
+    sleep 5s
+    ;;
+
+  restart)
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+
+  *)
+    echo "usage: $0 {start|stop|restart}"
+
+esac
+

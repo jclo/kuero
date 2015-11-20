@@ -1,0 +1,36 @@
+--- /etc/rc.d/rc.inet1.dist	2012-08-05 19:13:27.000000000 +0200
++++ /etc/rc.d/rc.inet1	2014-04-01 20:02:01.000000000 +0200
+@@ -3,6 +3,8 @@
+ # This script is used to bring up the various network interfaces.
+ #
+ # @(#)/etc/rc.d/rc.inet1 10.2  Sun Jul 24 12:45:56 PDT 2005  (pjv)
++#
++# This script has been updated to run inside a Lxc container
+ 
+ ############################
+ # READ NETWORK CONFIG FILE #
+@@ -107,14 +109,18 @@
+   done
+   # If the interface is a bridge, then create it first:
+   [ -n "${BRNICS[$i]}" ] && br_open $i
++
++  # Disabled inside the container
+   # If the interface isn't in the kernel yet (but there's an alias for it in
+   # modules.conf), then it should be loaded first:
+-  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
+-    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
+-      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
+-      /sbin/modprobe ${1}
+-    fi
+-  fi
++  #if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
++  #  if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
++  #    echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
++  #    /sbin/modprobe ${1}
++  #  fi
++  #fi
++  # end container
++
+   if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
+     if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
+       ! /sbin/ifconfig ${1} | grep -w inet 1> /dev/null ; then # interface not up or not configured

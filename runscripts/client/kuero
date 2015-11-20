@@ -1,0 +1,814 @@
+#!/bin/bash
+#
+# Kuero client cli 1.2.0
+#
+# This script runs on the client. It manages Kuero server through a set of
+# commands line.
+# 
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+set -e
+
+# Define Global Constants
+readonly VERSION='1.2.0'
+readonly PRODUCTION=true
+readonly USAGE='Usage: kuero COMMAND'
+readonly BASEDIR=$(pwd)
+readonly CONFIGFILE=$HOME/.kueroconfig
+readonly KUERO_SRV='kuero-srv'
+readonly KUERO_SRV_VM='kuero-srv-vm'
+readonly KUERO_SRV_USR='kuero-srv-usr'
+
+# Define Global variables
+HELP=''
+BASELINE=''
+
+
+# Load configuration file.
+function _loadConfig() {
+  # First check if the file exists
+  if [[ ! -e "$HOME/.kueroconfig" ]]; then
+    # It does no exist. Create it.
+    cat > $CONFIGFILE <<EOF
+KUERO_SERVER='0.0.0.0'
+KUERO_USER='nobody'
+EOF
+  fi
+
+  # Load it.
+  . $CONFIGFILE
+}
+
+
+# Test if the Server is up and running.
+function _isRemoteServerHere() {
+  #if ! (ssh -o ConnectTimeout=3 $KUERO_USER@$KUERO_SERVER 'whoami' &> /dev/null)
+    #then
+      #echo 'The Remote Server is not responding. Check your config.'
+      #exit 1
+  #fi
+
+  # Check first if 'nc' is installed!
+  if [[ ! -x '/usr/bin/nc' ]]; then
+    echo '/usr/bin/nc is not installed!'
+    exit 1
+  fi
+
+  # Check if port 22 of Remote Server reachable.
+  # (The server does not respond to ping - disabled by firewall)
+  if ! (nc -z -w 5 $KUERO_SERVER 22 &> /dev/null)
+  then
+    echo 'The Remote Server is not responding. Check your config.'
+    exit 1  
+  fi
+}
+
+
+# Check if user has Admin priviledges.
+function _isAdmin() {
+  WHOAMI=$(ssh $KUERO_USER@$KUERO_SERVER 'whoami')
+  if [[ $WHOAMI != 'root' ]]; then
+    echo 'You need admin privileges to run this command!'
+    echo ''
+    exit 0
+  fi
+}
+
+
+# Check if user is root.
+function _isRoot() {
+  WHOAMI=$(ssh $KUERO_USER@$KUERO_SERVER 'whoami')
+  if [[ $WHOAMI == 'root' ]]; then
+    echo 'root user cannot manage git projects!'
+    echo ''
+    exit 0
+  fi
+}
+
+
+# Build the Help List
+function _ku_cmd() {
+  HELP=$(printf "%s\n%-10s %s %s\n\n" "$HELP" "$1" "# " "$2")
+}
+
+
+# Implement readlink to support BSD and Linux platforms.
+# 'readlink -f' doesn't exist on Mac OSX.
+function _readlink() {
+  TARGET_FILE=$1
+
+  cd `dirname $TARGET_FILE`
+  TARGET_FILE=`basename $TARGET_FILE`
+
+  # Iterate down a (possible) chain of symlinks
+  while [ -L "$TARGET_FILE" ]
+  do
+      TARGET_FILE=`readlink $TARGET_FILE`
+      cd `dirname $TARGET_FILE`
+      TARGET_FILE=`basename $TARGET_FILE`
+  done
+
+  # Compute the canonicalized name by finding the physical path 
+  # for the directory we're in and appending the target file.
+  PHYS_DIR=`pwd -P`
+  RESULT=$PHYS_DIR/$TARGET_FILE
+  echo $PHYS_DIR
+}
+
+
+# Split command in the form aaa:bbb to a string aaa bbb
+function _splitCmd() {
+  STR_ARRAY=(`echo $1 | tr ":" "\n"`)
+  echo ${STR_ARRAY[0]} ${STR_ARRAY[1]}
+}
+
+
+# -----------------------------------------------------------------------------
+# Libraries
+# (list of functions to execute commands)
+# -----------------------------------------------------------------------------
+#@libs12345@#
+# Manage authentication keys.
+_ku_cmd config 'manage configuration'
+
+function _ku_config() {
+
+  # Help message
+  function _ku_help() {
+    echo ''
+    echo 'Usage: kuero keys:COMMAND [options] help'
+    echo ''
+    echo 'list     #  list configuration parameters'
+    echo 'user     #  set the username'
+    echo 'server   #  set the servername'
+    echo ''
+  }
+
+  # Detailed help message
+  function _ku_cmd_help() {
+    case $1 in
+
+      'list')
+        echo 'list has no option.'
+        echo ''
+        ;;
+
+      'user')
+        echo 'Usage: [-u <string>]'
+        echo '-u   username for the connection to the server'
+        echo ''
+        ;;
+
+      'server')
+        echo 'Usage: [-n <string>]'
+        echo '-n   domain name or IP address of the server'
+        echo ''
+        ;;
+
+      *)
+        echo "$1 does not exist!"
+      ;;
+    esac
+    exit 1
+  }
+
+
+  # main
+  case $1 in
+
+    'list')
+      # List has no option
+      echo "username: ${KUERO_USER}"
+      echo "server: ${KUERO_SERVER}"
+      echo "version: ${VERSION}"
+      ;;
+
+
+    'user')  
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Usage message
+      _ku_usage-user() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+      # Read option arguments.
+      shift
+      while getopts "u:" opt; do
+        case ${opt} in
+          u) user=${OPTARG} ;;
+          $) _ku_usage-user ;;
+        esac
+      done
+
+      # Check if all the mandatory arguments are provided.
+      if [[ -z ${user} ]]; then
+        echo "The options [u] are mandatory. Type help for more details."
+        exit 1
+      fi
+
+      # Well done. Proceed!
+      # To comply with both BSD and Linux (sed -i behaves differently on BSD and Linux)
+      sed 's/^.*KUERO_USER.*$/KUERO_USER='"${user}"'/' ${CONFIGFILE} > ${CONFIGFILE}_2
+      mv ${CONFIGFILE}_2 ${CONFIGFILE}
+      ;;
+
+
+    'server')
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Usage message
+      _ku_usage-server() { echo 'Usage: [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+      # Read option arguments.
+      shift
+      while getopts "n:" opt; do
+        case ${opt} in
+          n) server=${OPTARG} ;;
+          $) _ku_usage-server ;;
+        esac
+      done
+
+      # Check if all the mandatory arguments are provided.
+      if [[ -z ${server} ]]; then
+        echo "The options [n] are mandatory. Type help for more details."
+        exit 1
+      fi
+
+      # Well done. Proceed!
+      # To comply with both BSD and Linux (sed -i behaves differently on BSD and Linux)
+      sed 's/^.*KUERO_SERVER.*$/KUERO_SERVER='"${server}"'/' ${CONFIGFILE} > ${CONFIGFILE}_2
+      mv ${CONFIGFILE}_2 ${CONFIGFILE}
+      ;;
+
+
+    *)
+      _ku_help
+      ;;
+
+  esac
+
+}
+
+# Manage authentication keys.
+_ku_cmd git 'manage projects'
+
+function _ku_git() {
+
+  # Local variables
+  local user=${KUERO_USER}
+  local server=${KUERO_SERVER}
+  local basedir=${BASEDIR}
+
+  # Is Server Up and am I end user?
+  # Exist if I am root.
+  _isRemoteServerHere
+  _isRoot
+
+  # Help message
+  function _ku_help() {
+    echo ''
+    echo 'Usage: kuero git:COMMAND [options] help'
+    echo ''
+    echo 'clone    #  clone remote git on local host'
+    echo 'list     #  list the git remote repositories'
+    echo 'push     #  push local git project on remote git server'
+    echo ''
+  }
+
+  # Detailed help message
+  function _ku_cmd_help() {
+    case $1 in
+
+      'clone')
+        echo 'Usage: [-n <string>]'
+        echo '-n   name of the git remote repository'
+        echo ''
+        ;;
+
+      'list')
+        echo 'list has no option.'
+        echo ''
+        ;;
+
+      'push')
+        echo 'Usage: [-n <string>]'
+        echo '-n   name of the git remote repository'
+        ;;
+
+      *)
+        echo "$1 does not exist!"
+      ;;
+    esac
+    exit 1
+  }
+
+
+  # main
+  case $1 in
+
+    'clone')  
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Usage message
+      _ku_usage-clone() { echo 'Usage: [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+      # Read option arguments.
+      shift
+      while getopts "n:" opt; do
+        case ${opt} in
+          n) gitname=${OPTARG} ;;
+          $) _ku_usage-clone ;;
+        esac
+      done
+
+      # Check if all the mandatory arguments are provided.
+      if [[ -z ${gitname} ]]; then
+        echo "The options [n] are mandatory. Type help for more details."
+        exit 1
+      fi
+
+      # Well done. Proceed!
+      # Ok, check if git project already exists
+      if (ssh ${user}@${server} test -d ${gitname})
+      then
+        # Ok, it exists, clone it.
+        cd ${basedir} && git clone ${user}@${server}:~/${gitname}
+      else
+        echo 'Git repository does not exist!'
+      fi
+      ;;
+
+
+    'list')
+      ssh ${user}@${server} 'ls -l | grep "^d"'
+      ;;
+
+
+    'push')
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Usage message
+      _ku_usage-push() { echo 'Usage: [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+      # Read option arguments.
+      shift
+      while getopts "n:" opt; do
+        case ${opt} in
+          n) gitname=${OPTARG} ;;
+          $) _ku_usage-clone ;;
+        esac
+      done
+
+      # Check if all the mandatory arguments are provided.
+      if [[ -z ${gitname} ]]; then
+        echo "The options [n] are mandatory. Type help for more details."
+        exit 1
+      fi
+
+      # Well done. Proceed!
+      # Check if remote git exists.
+        if (ssh ${user}@${server} test -d ${gitname})
+        then
+          # push it.
+          # Push to server first.
+          cd ${basedir} && git push ${user}@${server}:~/${gitname} master
+          # Push to vm then.
+          ssh ${user}@${server} "${KUERO_SRV_USR} push -u ${user} -n ${gitname}"
+        else
+          echo "Git repository ${gitname} does not exist!"
+        fi
+      ;;
+
+
+    *)
+      _ku_help
+      ;;
+
+  esac
+
+}
+
+# Display list of commmands.
+_ku_cmd help 'list of available commands and their help'
+function _ku_help() {
+    echo ''
+    echo $USAGE
+    echo "$HELP"
+    echo ''
+}
+
+# Manage authentication keys.
+_ku_cmd keys 'manage authentication keys'
+function _ku_keys() {
+  
+  # Help message
+  function _ku_keys_help() {
+    echo ''
+    echo 'Usage: kuero keys:COMMAND'
+    echo ''
+    echo 'add      #  add a key for the current user'
+    echo 'clear    #  remove all authentication keys from the current user'
+    echo 'remove   #  remove a key from the current user'
+    echo ''
+  }
+
+  # main
+  case $1 in
+
+    'add')
+      # Check if ~/.ssh/id_rsa.pub is here
+      if [[ -f $HOME/.ssh/id_rsa.pub ]]; then
+        echo 'Copying public key to server'
+        # create .ssh dir if it doesn't exist, then copy key to .ssh/authorized_keys
+        cat $HOME/.ssh/id_rsa.pub | ssh $KUERO_USER@$KUERO_SERVER 'mkdir -p .ssh && cat >> .ssh/authorized_keys && echo "Key copied"'
+      else
+        echo '~/.ssh/id_rsa.pub key do not exist!'
+        echo 'Create one:'
+        echo '  . ssh-keygen -t rsa -C "your_email@example.com"'
+      fi
+      ;;
+
+
+    'clear')
+      # Remove all the keys from .ssh/authorized_keys
+        ssh $KUERO_USER@$KUERO_SERVER 'rm .ssh/authorized_keys && touch .ssh/authorized_keys'
+        echo 'All the keys are removed.'
+      ;;
+
+
+    'remove')
+      # Check if key credential provided
+      if [[ $2 ]]; then
+        # Ok, now check if it matches!
+        if (ssh $KUERO_USER@$KUERO_SERVER grep -q "$2" .ssh/authorized_keys)
+        then
+          # Key found
+          KEY_PATTERN="'/"${2}"/d'"
+          ssh $KUERO_USER@$KUERO_SERVER sed -i ${KEY_PATTERN} .ssh/authorized_keys
+          echo "Key with credential $2 removed."
+        else
+          # Key not found
+          echo "There is no key with this credential $2."
+        fi
+      else
+        echo 'You need to provide the credentials of your key!'
+      fi
+      ;;
+
+    *)
+      _ku_keys_help
+      ;;
+
+  esac
+
+}
+
+# Upgrade Server and Core container packages.
+_ku_cmd upgrade 'upgrade the server or the core container'
+
+function _ku_upgrade() {
+
+  # Local variables
+  local user=${KUERO_USER}
+  local server=${KUERO_SERVER}
+  
+  # Is Server Up and am I root?
+  _isRemoteServerHere
+  _isAdmin
+
+
+  # Help message
+  function _ku_help() {
+    echo ''
+    echo 'Usage: kuero upgrade:COMMAND [options] help'
+    echo ''
+    echo 'server   #  upgrade the server'
+    echo 'core     #  upgrade the core container'
+    echo ''
+  }
+
+  # main
+  case $1 in
+
+    'server')
+      ssh ${user}@${server} "${KUERO_SRV} upgrade -n server"
+      ;;
+
+    'core')
+      ssh ${user}@${server} "${KUERO_SRV} upgrade -n core"
+      ;;
+
+    *)
+      _ku_help
+      ;;
+
+  esac
+
+}
+
+# Manage the users
+_ku_cmd users 'manage users'
+
+function _ku_users() {
+
+  # Local variables
+  local user=${KUERO_USER}
+  local server=${KUERO_SERVER}
+
+  # Is Server Up and am I root?
+  _isRemoteServerHere
+  _isAdmin
+
+
+  # Help message
+  function _ku_help() {
+    echo ''
+    echo 'Usage: kuero users:COMMAND [options] help'
+    echo ''
+    echo 'list     #  list the user accounts'
+    echo 'add      #  add a new user'
+    echo 'remove   #  delete the user'
+    echo ''
+  }
+
+  # Detailed help message
+  function _ku_cmd_help() {
+    case $1 in
+
+      'list')
+        echo 'list has no option.'
+        echo ''
+        ;;
+
+      'add')
+        echo 'Usage: [-n <string>]'
+        echo '-u   username'
+        echo ''
+        ;;
+
+      'remove')
+        echo 'Usage: [-n <string>]'
+        echo '-u   username'
+        echo ''
+        ;;
+
+      *)
+        echo "$1 does not exist!"
+      ;;
+    esac
+    exit 1
+  }
+
+
+  # main
+  case $1 in
+
+    'list')
+      ssh ${user}@${server} "cat /etc/passwd | awk -F ':' '\$3>=1000 {print \$1, \$6}' "
+      ;;
+
+    'add')
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Usage message
+      _ku_usage-add() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+      # Read option arguments.
+      shift
+      while getopts "u:" opt; do
+        case ${opt} in
+          u) username=${OPTARG} ;;
+          $) _ku_usage-add ;;
+        esac
+      done
+
+      # Check if all the mandatory arguments are provided.
+      if [[ -z ${username} ]]; then
+        echo "The options [u] are mandatory. Type help for more details."
+        exit 1
+      fi
+
+      # Well done. Proceed!
+      # Check if this username is new.
+      if ! (ssh ${user}@${server} id -u ${username} &> /dev/null)
+      then
+        # Ok this user doesn't exist. We can add it.
+        ssh ${user}@${server} useradd -m -d /home/${username} ${username}
+        # Create a random password using Remote Server to avoid Linux, BSD unconsistencies
+        KU_PASS=$(ssh ${user}@${server} '< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c8')
+        # Add password to ${username}
+        ssh ${user}@${server} "echo ${username}:$KU_PASS | chpasswd"
+        echo "User ${username} created with password $KU_PASS"
+        # Generate key
+        KEY_GEN='su '${username}' -c '\''ssh-keygen -t rsa -N "" -n '${username}' -f /home/'${username}'/.ssh/id_rsa'\'
+        echo $KEY_GEN
+        ssh ${user}@${server} $KEY_GEN &> /dev/null
+      else
+        echo "${username} user already exist!"
+        exit 1
+      fi
+      ;;
+
+    'remove')
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Usage message
+      _ku_usage-remove() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+      # Read option arguments.
+      shift
+      while getopts "u:" opt; do
+        case ${opt} in
+          u) username=${OPTARG} ;;
+          $) _ku_usage-remove ;;
+        esac
+      done
+
+      # Check if all the mandatory arguments are provided.
+      if [[ -z ${username} ]]; then
+        echo "The options [u] are mandatory. Type help for more details."
+        exit 1
+      fi
+
+      # Well done. Proceed!
+      # Check if vm are associated to this user.
+      if (ssh ${user}@${server} "lxc-ls | grep -q "${username}_*"")
+      then
+        echo "Containers exist for the user ${username}. Delete them first."
+        exit 1
+      fi
+
+      # Check if this user exists.
+      if (ssh ${user}@${server} id -u ${username} &> /dev/null)
+      then
+      # Ok. Ask for confirmation before deleting it.
+      while true; do
+        read -p "This will delete ${username} account, home dir and mail spool. Please confirm [Y/n]?" yn
+        case $yn in
+          [Yy]* ) ssh  ${user}@${server} "userdel -r ${username}";
+                  echo "${username} account deleted."
+                  break;;
+          [Nn]* ) echo 'Aborting ...';
+                  echo ' ';
+                  exit 0;
+                  break;;
+          * ) echo 'Please answer Yes or No.';;
+        esac
+      done
+      echo ' '
+      else
+        echo "${username} user does not exist!"
+        exit 1
+      fi
+      ;;
+
+    *)
+      _ku_help
+      ;;
+
+  esac
+
+}
+
+# Display the version
+_ku_cmd version 'display the current version'
+function _ku_version() {
+    echo $VERSION
+}
+
+# Manage containers
+_ku_cmd vm 'manage containers'
+
+function _ku_vm() {
+
+  # Local variables
+  local user=${KUERO_USER}
+  local server=${KUERO_SERVER}
+  
+  # Is Server Up and am I root?
+  _isRemoteServerHere
+  _isAdmin
+
+
+  # Help message
+  function _ku_vm_help() {
+    echo ''
+    echo 'Usage: kuero vm:COMMAND [arg]'
+    echo ''
+    echo 'list     #  list the containers'
+    echo 'info     #  provide info on a given container'
+    echo 'create   #  create a new container'
+    echo 'destroy  #  delete the container'
+    echo 'start    #  start the container'
+    echo 'stop     #  stop the container'
+    echo 'update   #  update the container'
+    echo ''
+  }
+
+  # main
+  case $1 in
+
+    'list')
+      ssh ${user}@${server} 'lxc-ls'
+      ;;
+
+    'info')
+      #if [[ $2 ]]; then
+        #ssh $KUERO_USER@$KUERO_SERVER "lxc-info -n $2"
+      #else
+        # Container name not provided!
+        #echo 'You need to provide a container name!'
+      #fi
+      shift
+      ssh ${user}@${server} "${KUERO_SRV_VM} info $@"
+      ;;
+
+    'create')
+      shift
+      ssh ${user}@${server} "${KUERO_SRV_VM} create $@"
+      ;;
+
+    'destroy')
+      shift
+      ssh  ${user}@${server} "${KUERO_SRV_VM} destroy $@"
+      ;;
+
+    'start')
+      shift
+      ssh  ${user}@${server} "${KUERO_SRV_VM} start $@"
+      ;;
+
+    'stop')
+      shift
+      ssh  ${user}@${server} "${KUERO_SRV_VM} stop $@"
+      ;;
+
+    'update')
+      shift
+      ssh  ${user}@${server} "${KUERO_SRV_VM} update $@"
+      ;;
+
+    *)
+      _ku_vm_help
+      ;;
+
+  esac
+
+}
+
+
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+# Full directory name of the script no matter where it is being called from.
+cd $(_readlink ${BASH_SOURCE[0]})
+BASELINE=$(pwd)
+
+# Load configuration file.
+_loadConfig
+
+# Load external files in development mode.
+if [[ $PRODUCTION = false ]]; then
+
+  # Load all the functions.
+  for FCT in lib/kuero-*.sh
+  do
+    . ./$FCT
+  done
+  echo $FCT
+fi
+
+# Execute the function associated to the CMD.
+declare -a CMD=($(_splitCmd $1))
+if [[ ${CMD[0]} ]]; then
+  SUF=${CMD[0]}
+  shift
+else
+  SUF=help
+fi
+FUNC=_ku_$SUF
+
+# Check if the function exists.
+if [[ $(type -t $FUNC) != "function" ]]; then
+  echo "$CMD is not a valid command"
+  exit 1 
+fi
+
+# Execute
+$FUNC ${CMD[1]} $@
+
+#

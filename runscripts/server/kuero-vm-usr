@@ -1,0 +1,234 @@
+#!/bin/bash
+#
+# Kuero Container User cli 1.2.0
+#
+# This script runs inside the container at user level. It is driven by 
+# Kuero Server User cli script running on the server at user level too.
+# It implements complex commands that require several lines of Bash to
+# be executed.
+#
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+readonly KUERO_CONF='kuero.conf'
+
+# Load configuration file:
+if [[ ! -f /etc/${KUERO_CONF} ]]; then
+  echo "${KUERO_VM_USR}: configuration file ${KUERO_CONF} not found! Process aborted ..."
+  exit 1
+fi
+. /etc/${KUERO_CONF} 
+
+# -----------------------------------------------------------------------------
+# Private Functions
+#
+# -----------------------------------------------------------------------------
+
+# Help message
+function _help() {
+  echo ''
+  echo 'Usage: ${KUERO_VM_USR} COMMAND [options] help'
+  echo ''
+  echo 'updatewebservice     # update the settings for the web service'
+  echo 'restartwebservice    @ restart the web service'
+  echo ''
+}
+
+
+# Detailed help message
+function _cmdHelp() {
+  case $1 in
+
+    'updatewebservice')
+      echo 'Still to be done...'
+      echo ''
+      ;;
+
+    'restartwebservice')
+      echo 'Still to be done...'
+      echo ''
+      ;;
+
+    *)
+      echo "$1 does not exist!"
+    ;;
+  esac
+  exit 1
+}
+
+
+# Get type of container
+function _gettype() {
+  local node=$(whereis node | awk -F " " '{print $2}')
+  local nginx=$(whereis nginx | awk -F " " '{print $2}')
+  local php=$(whereis php | awk -F " " '{print $2}')
+  local type=''
+
+  # Determine the type of web service.
+  if [[ ${node} == '/usr/bin/node' ]]
+    then type='node'
+  elif [[ ${nginx} == '/usr/sbin/nginx' ]] && [[ ${php} == '' ]]
+    then type='html'
+  elif [[ ${nginx} == '/usr/sbin/nginx' ]] && [[ ${php} == '/usr/bin/php' ]]
+    then type='php'
+  else
+    type='???'
+  fi
+
+  # Return type
+  echo ${type}
+}
+
+
+# Update web service
+function _update() {
+  local user=$1
+  local name=$2
+  local port=$3
+  local type=$(_gettype)
+
+  case ${type} in
+
+    'node')
+      # Set port
+      sed -i "s/8000/${port}/" /home/${user}/${name}/config.js
+      ;;
+
+    'html')
+      # Nothing to do.
+      ;;
+
+    'php')
+      # nothing to do.
+      ;;
+
+    *)
+      echo "${KUERO_VM_USR}:_update(): The type ${type} is not supported at all!"
+      exit 1
+      ;;
+  esac
+
+}
+
+
+# Restart web service
+function _restart() {
+  local user=$1
+  local name=$2
+  local port=$3
+  local type=$(_gettype)
+
+  case ${type} in
+
+    'node')
+      # Kill node
+      killall node
+      # Restart node
+      node /home/${user}/${name}/app.js &> /dev/null &
+      ;;
+
+    'html')
+      # Nothing to do.
+      ;;
+
+    'php')
+      # Nothing to do.
+      ;;
+
+    *)
+      echo "${KUERO_VM_USR}:_restart(): The type ${type} is not supported at all!"
+      exit 1
+      ;;
+  esac
+
+}
+
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+case $1 in
+
+  'updatewebservice')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-update() { echo 'Usage: [-u <string>] [-n <string>] [-p <number>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:p:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        p) port=${OPTARG} ;;
+        $) _usage-update;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]] || [[ -z ${port} ]] ; then
+      echo "The options [unp] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Update web service
+    _update ${user} ${name} ${port}
+    ;;
+
+
+  'restartwebservice')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-restart() { echo 'Usage: [-u <string>] [-n <string>] [-p <number>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:p:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        p) port=${OPTARG} ;;
+        $) _usage-restart;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]] || [[ -z ${port} ]] ; then
+      echo "The options [unp] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. ...
+    _restart ${user} ${name} ${port}
+    ;;
+
+
+  *)
+    _help
+    ;;
+
+esac
+
+#
+

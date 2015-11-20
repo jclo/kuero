@@ -1,0 +1,193 @@
+#!/bin/bash
+#
+# Kuero client cli @#Release#@
+#
+# This script runs on the client. It manages Kuero server through a set of
+# commands line.
+# 
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+set -e
+
+# Define Global Constants
+readonly VERSION='@#Release#@'
+readonly PRODUCTION=false
+readonly USAGE='Usage: kuero COMMAND'
+readonly BASEDIR=$(pwd)
+readonly CONFIGFILE=$HOME/.kueroconfig
+readonly KUERO_SRV='kuero-srv'
+readonly KUERO_SRV_VM='kuero-srv-vm'
+readonly KUERO_SRV_USR='kuero-srv-usr'
+
+# Define Global variables
+HELP=''
+BASELINE=''
+
+
+# Load configuration file.
+function _loadConfig() {
+  # First check if the file exists
+  if [[ ! -e "$HOME/.kueroconfig" ]]; then
+    # It does no exist. Create it.
+    cat > $CONFIGFILE <<EOF
+KUERO_SERVER='0.0.0.0'
+KUERO_USER='nobody'
+EOF
+  fi
+
+  # Load it.
+  . $CONFIGFILE
+}
+
+
+# Test if the Server is up and running.
+function _isRemoteServerHere() {
+  #if ! (ssh -o ConnectTimeout=3 $KUERO_USER@$KUERO_SERVER 'whoami' &> /dev/null)
+    #then
+      #echo 'The Remote Server is not responding. Check your config.'
+      #exit 1
+  #fi
+
+  # Check first if 'nc' is installed!
+  if [[ ! -x '/usr/bin/nc' ]]; then
+    echo '/usr/bin/nc is not installed!'
+    exit 1
+  fi
+
+  # Check if port 22 of Remote Server reachable.
+  # (The server does not respond to ping - disabled by firewall)
+  if ! (nc -z -w 5 $KUERO_SERVER 22 &> /dev/null)
+  then
+    echo 'The Remote Server is not responding. Check your config.'
+    exit 1  
+  fi
+}
+
+
+# Check if user has Admin priviledges.
+function _isAdmin() {
+  WHOAMI=$(ssh $KUERO_USER@$KUERO_SERVER 'whoami')
+  if [[ $WHOAMI != 'root' ]]; then
+    echo 'You need admin privileges to run this command!'
+    echo ''
+    exit 0
+  fi
+}
+
+
+# Check if user is root.
+function _isRoot() {
+  WHOAMI=$(ssh $KUERO_USER@$KUERO_SERVER 'whoami')
+  if [[ $WHOAMI == 'root' ]]; then
+    echo 'root user cannot manage git projects!'
+    echo ''
+    exit 0
+  fi
+}
+
+
+# Build the Help List
+function _ku_cmd() {
+  HELP=$(printf "%s\n%-10s %s %s\n\n" "$HELP" "$1" "# " "$2")
+}
+
+
+# Implement readlink to support BSD and Linux platforms.
+# 'readlink -f' doesn't exist on Mac OSX.
+function _readlink() {
+  TARGET_FILE=$1
+
+  cd `dirname $TARGET_FILE`
+  TARGET_FILE=`basename $TARGET_FILE`
+
+  # Iterate down a (possible) chain of symlinks
+  while [ -L "$TARGET_FILE" ]
+  do
+      TARGET_FILE=`readlink $TARGET_FILE`
+      cd `dirname $TARGET_FILE`
+      TARGET_FILE=`basename $TARGET_FILE`
+  done
+
+  # Compute the canonicalized name by finding the physical path 
+  # for the directory we're in and appending the target file.
+  PHYS_DIR=`pwd -P`
+  RESULT=$PHYS_DIR/$TARGET_FILE
+  echo $PHYS_DIR
+}
+
+
+# Split command in the form aaa:bbb to a string aaa bbb
+function _splitCmd() {
+  STR_ARRAY=(`echo $1 | tr ":" "\n"`)
+  echo ${STR_ARRAY[0]} ${STR_ARRAY[1]}
+}
+
+
+# -----------------------------------------------------------------------------
+# Libraries
+# (list of functions to execute commands)
+# -----------------------------------------------------------------------------
+#@libs12345@#
+
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+# Full directory name of the script no matter where it is being called from.
+cd $(_readlink ${BASH_SOURCE[0]})
+BASELINE=$(pwd)
+
+# Load configuration file.
+_loadConfig
+
+# Load external files in development mode.
+if [[ $PRODUCTION = false ]]; then
+
+  # Load all the functions.
+  for FCT in lib/kuero-*.sh
+  do
+    . ./$FCT
+  done
+  echo $FCT
+fi
+
+# Execute the function associated to the CMD.
+declare -a CMD=($(_splitCmd $1))
+if [[ ${CMD[0]} ]]; then
+  SUF=${CMD[0]}
+  shift
+else
+  SUF=help
+fi
+FUNC=_ku_$SUF
+
+# Check if the function exists.
+if [[ $(type -t $FUNC) != "function" ]]; then
+  echo "$CMD is not a valid command"
+  exit 1 
+fi
+
+# Execute
+$FUNC ${CMD[1]} $@
+
+#

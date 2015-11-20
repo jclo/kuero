@@ -1,0 +1,172 @@
+#!/bin/bash
+#
+# Kuero Server User cli @#Release#@
+#
+# This script runs on the server. It can be executed by 'users' without
+# 'admin' priviledges. It is driven by Kuero cli script running on the
+# client. It implements complex commands that require several lines of
+# Bash to be executed.
+#
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+readonly KUERO_CONF='kuero.conf'
+
+# Load configuration file:
+if [[ ! -f /etc/${KUERO_CONF} ]]; then
+  echo "${KUERO_USR}: configuration file ${KUERO_CONF} not found! Process aborted ..."
+  exit 1
+fi
+. /etc/${KUERO_CONF} 
+
+
+# -----------------------------------------------------------------------------
+# Private Functions
+#
+# -----------------------------------------------------------------------------
+
+# Help message
+function _help() {
+  echo ''
+  echo 'Usage: ${KUERO_SRV_USR} COMMAND [options] help'
+  echo ''
+  echo 'push       #  push the git project to the remote repository'
+  echo ''
+}
+
+
+# Detailed help message
+function _cmdHelp() {
+  case $1 in
+
+    'push')
+      echo 'Usage: [-n <string>]'
+      echo '-n   the name of the git remote repository'
+      echo ''
+      ;;
+
+    *)
+      echo "$1 does not exist!"
+    ;;
+  esac
+  exit 1
+}
+
+
+# Push git Project into container and restart web service.
+function _gitpush() {
+  local user=$1
+  local name=$2
+  local port=$(ls /lxc | grep "${user}_${name}_*" | grep -o "[0-9]*")
+  local vm=${user}_${name}_${port}
+  local tmp=''
+
+  # Check that this project exists.
+  tmp=$(ls | grep "${name}")
+  if [[ ${tmp} == '' ]] ; then
+    echo "The Git project ${name} does not exist!"
+    exit 1
+  fi
+
+  # Check that we found the port number for this vm.
+  re='^[0-9]+$'
+  if ! [[ ${port} =~ $re ]] ; then
+    echo "Error. We cannot find a port number for ${user}_${name}" >&2
+    exit 1
+  fi 
+
+  # Check that this vm is running.
+  # (we use ping because 'lxc-info -n' isn't available at the user level)
+  ping -c 1 -t 1 ${vm} &> /dev/null
+  if ! [[ $? -eq 0 ]]; then
+    echo "${vm} is not running. Ask your admin to start it first!"
+    exit 1
+  fi
+
+  # Ok. This vm exists and it is running.
+  # Copy git to vm.
+  echo "Pushing ${name} git project inside the container ${vm} to /home/${user} ..."
+  git clone ${name} /tmp/${name} &> /dev/null
+  rm -Rf /tmp/${name}/.git
+  # ...
+  scp -o StrictHostKeyChecking=no -r /tmp/${name}/. ${user}@${vm}:${name}/
+  rm -Rf /tmp/${name}
+  echo 'Done.'
+
+  # Update web service
+  echo 'Updating the web service ...'
+  ssh ${user}@${vm} "${KUERO_VM_USR} updatewebservice -u ${user} -n ${name} -p ${port}"
+  if [[ $? -eq 1 ]] ; then
+    echo 'Process aborted.'
+    exit 1
+  fi
+
+  # Restart web service
+  echo 'Restarting the web service ...'
+  ssh ${user}@${vm} "${KUERO_VM_USR} restartwebservice -u ${user} -n ${name} -p ${port}"
+  if [[ $? -eq 1 ]] ; then
+    echo 'Process aborted.'
+    exit 1
+  fi
+
+}
+
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+case $1 in
+
+  'push')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-push() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        $) _usage-push;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]] ; then
+      echo "The options [un] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Push Git Project
+    _gitpush ${user} ${name}
+    ;;
+
+
+  *)
+    _help
+    ;;
+
+esac
+
+#

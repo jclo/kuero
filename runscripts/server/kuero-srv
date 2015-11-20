@@ -1,0 +1,230 @@
+#!/bin/bash
+#
+# Kuero Server cli 1.2.0
+#
+# This script runs on the server and manages it.
+#
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+readonly KUERO_CONF='kuero.conf'
+
+# Load configuration file:
+if [[ ! -f /etc/${KUERO_CONF} ]]; then
+  echo "${KUERO_SRV}: configuration file ${KUERO_CONF} not found! Process aborted ..."
+  exit 1
+fi
+. /etc/${KUERO_CONF} 
+
+
+# -----------------------------------------------------------------------------
+# Private Functions
+#
+# -----------------------------------------------------------------------------
+
+# Help message
+function _help() {
+  echo ''
+  echo 'Usage: ${KUERO_SRV} COMMAND [options] help'
+  echo ''
+  echo 'upgrade     #  upgrade the server or the core container'
+  echo ''
+}
+
+# Detailed help message
+function _cmdHelp() {
+  case $1 in
+
+    'upgrade')
+      echo 'Usage: [-n <string>]'
+      echo '-n <name of the machine to upgrade>'
+      echo ''
+      ;;
+
+    *)
+      echo "$1 does not exist!"
+    ;;
+  esac
+  exit 1
+}
+
+##
+# Upgrade the server:
+#
+function _upgradeServer() {
+  echo "Upgrading Kuero Server ..."
+
+  # Update packages:
+  mv /etc/slackpkg/mirrors /etc/slackpkg/mirrors-dist
+  echo ${MIRROR}/${SUITE}/ > /etc/slackpkg/mirrors
+  slackpkg -batch=on -default_answer=y update
+  slackpkg -batch=on -default_answer=y upgrade-all
+  mv /etc/slackpkg/mirrors-dist /etc/slackpkg/mirrors
+
+  # Delete unusefull doc. and config files:
+  #(for debugging purposes, replace '&> /dev/null' by '2>&1')
+  rm -R /usr/doc/* &> /dev/null
+  rm -R /usr/share/locale/* &> /dev/null
+  rm -R /usr/man/* &> /dev/null
+}
+
+##
+# Upgrade the core container:
+#
+function _upgradeCoreContainer() {
+  local core='core'
+  local match=''
+
+  echo "Upgrading LXC Core container ..."
+
+  # Check that the container exists:
+  declare -a CNTLIST=($(lxc-ls))
+  for i in "${CNTLIST[@]}"
+  do
+    if [[ $i == ${core} ]]; then
+      # core exists!
+      match=${i}
+      break
+    fi
+  done
+
+  if [[ ! ${match} == ${core} ]]; then
+    echo "The Core Container ${core} does not exist! Process aborted ..."
+    exit 1
+  fi
+
+  # Ok. Copy certificates to access the container without password:
+  mkdir -p $LXC_PATH/${core}/rootfs/root/.ssh
+  cat /root/.ssh/id_rsa.pub > $LXC_PATH/${core}/rootfs/root/.ssh/authorized_keys
+
+  # Start the container:
+  echo "Starting the LXC Core Container ${core} ..."
+  lxc-start -d -n ${core}
+  sleep 10
+  if (! lxc-info -n ${core} | grep -q '\sRUNNIN[G$]')
+    then
+      echo "The Core Container ${core} does not start! Process aborted ..."
+      exit 1
+  fi
+  # Ok. Give details to the user:
+  lxc-info -n ${core}
+
+  # Update the core container:
+  # Create a script to update the core container:
+  ssh -o StrictHostKeyChecking=no root@${core} "cat > a.sh << EOF
+# Update & upgrade:
+mv /etc/slackpkg/mirrors /etc/slackpkg/mirrors-dist
+echo ${MIRROR}/${SUITE}/ > /etc/slackpkg/mirrors
+slackpkg -batch=on -default_answer=y update
+slackpkg -batch=on -default_answer=y upgrade-all
+mv /etc/slackpkg/mirrors-dist /etc/slackpkg/mirrors
+
+# Delete the curent certificates:
+cd /etc/ssh
+rm *.pub
+rm *_key
+mv ssh_config.new ssh_config
+mv sshd_config.new sshd_config
+rm /root/.ssh/*
+
+# Delete unusefull doc. and config files:
+rm -R /usr/doc/* &> /dev/null
+rm -R /usr/share/locale/* &> /dev/null
+rm -R /usr/man/* &> /dev/null
+
+# Cleanup log messages:
+cd /var/log
+rm dmesg ; touch dmesg
+rm lastlog ; touch lastlog
+rm messages ; touch messages
+rm syslog ; touch syslog
+rm wtmp ; touch wtmp
+
+# Delete the history:
+rm /root/.bash_history &> /dev/null
+
+# Delete /tmp content & script: 
+find '/tmp' -type f -exec rm {} \; &> /dev/null
+rm /root/a.sh
+echo 'Done!'
+halt
+
+EOF"
+
+  # Execute the script:
+  ssh root@${core} "sh a.sh"
+
+  # Stop the container:
+  echo "Waiting the container stops ..."
+  lxc-stop -n core
+  wait
+  lxc-info -n core
+
+  # Remove core certificates from the known-hosts:
+  sed -i "/^${core},/d" /root/.ssh/known_hosts
+
+  echo "Upgrade completed!"
+
+}
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+case $1 in
+
+  # Give info on a container.
+  'upgrade')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usageUpgrade() { echo 'Usage: [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments
+    shift
+    while getopts "n:" opt; do
+      case ${opt} in
+        n) who=${OPTARG} ;;
+        *) _usageUpgrade ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided
+    if [[ -z ${who} ]]; then
+      echo "The options [n] is mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Ok.
+    if [[ ${who} == 'server' ]]; then
+      _upgradeServer
+    else
+      _upgradeCoreContainer
+    fi
+    ;;
+
+  *)
+    _help
+    ;;
+
+esac
+
+#

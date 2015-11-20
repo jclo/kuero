@@ -1,0 +1,700 @@
+#!/bin/bash
+
+#
+# lxc: linux Container library
+
+# Authors:
+# Daniel Lezcano <daniel.lezcano@free.fr>
+# Jclo <jclo@mobilabs.fr>
+
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
+# Detect use under userns (unsupported)
+for arg in "$@"; do
+  [ "$arg" = "--" ] && break
+  if [ "$arg" = "--mapped-uid" -o "$arg" = "--mapped-gid" ]; then
+    echo "This template can't be used for unprivileged containers." 1>&2
+    echo "You may want to try the \"download\" template instead." 1>&2
+    exit 1
+  fi
+done
+
+# Make sure the usual locations are in PATH
+export PATH=$PATH:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Choose your mirror for downloading slackware packages
+SUITE=${SUITE:-slackware64-14.1}
+MIRROR=${MIRROR:-http://mirrors.slackware.com/slackware}
+LXC_TEMPLATE_CONFIG="/usr/share/lxc/config"
+cache=${cache:-/var/cache/lxc/slackware}
+
+# This is the required set of packages for building
+# a minimal running Slackware server. 
+# Thanks to Vincent Batts for this list of packages
+# http://connie.slackware.com/~vbatts/minimal/
+PACKAGES=${PACKAGES:-" \
+aaa_base aaa_elflibs aaa_terminfo bash bin bzip2 coreutils dcron dialog e2fsprogs \
+elvis etc findutils gawk glibc-solibs glibc-zoneinfo grep gzip logrotate openssl-solibs \
+pkgtools procps sed shadow sharutils sysklogd sysvinit sysvinit-functions sysvinit-scripts tar \
+udev util-linux which xz \
+diffutils slackpkg \
+mpfr \
+dhcpcd gnupg-1.4 iputils net-tools network-scripts openssh wget"}
+
+
+# This function download slackware packages defined
+# in $PACKAGES.
+function download_slackware() {
+
+  # Add a slackpkg default mirror
+  if [ ! -f "/etc/slackpkg/mirrors-dist" ]; then
+    mv /etc/slackpkg/mirrors /etc/slackpkg/mirrors-dist
+  fi
+  echo "$MIRROR/$SUITE/" > /etc/slackpkg/mirrors
+
+  # download the packages into the cache folder
+  echo "Downloading some slackware minimal packages..."
+  (
+    # Set download directory
+    sed -i "s/TEMP=/#TEMP=/" /etc/slackpkg/slackpkg.conf
+    sed -i "/#TEMP=/a TEMP=$cache" /etc/slackpkg/slackpkg.conf
+
+    # Update list of packages
+    slackpkg -batch=on update
+
+    # Download packages
+    for package in $PACKAGES; do
+      slackpkg -batch=on -default_answer=y download $package
+    done
+
+    # Restitute default download directory
+    sed -i "/#TEMP=/{n;d}" /etc/slackpkg/slackpkg.conf 
+    sed -i "s/#TEMP=/TEMP=/" /etc/slackpkg/slackpkg.conf
+  )
+
+  if [ $? -ne 0 ]; then
+    echo "Failed to download the packages, aborting."
+    return 1
+  fi
+
+  echo "Download complete."
+  return 0
+}
+
+
+# This function downloads and installs slackware packages
+# into $cache/rootfs
+function install_slackware() {
+  local rootfs=$1
+
+  mkdir -p /var/lock/subsys/
+  (
+    # Check if another process is currently downloading packages 
+    flock -n -x 200
+    if [ $? -ne 0 ]; then
+      echo "Cache repository is busy."
+      return 1
+    fi
+
+    #
+    echo "Checking cache download in $cache... "
+    if [ ! -e "$cache" ]; then
+      download_slackware
+      if [ $? -ne 0 ]; then
+        echo "Failed to download slackware base packages."
+        return 1
+      fi
+    fi
+
+    echo "Copying packages in $cache/packages"
+    if [ -e "$cache/packages" ]; then
+      echo "Cleaning up existing $cache/packages folder ... "
+      rm -fR "$cache/packages"
+    fi
+    mkdir -p "$cache/packages"
+    find $cache/slack*/. -name "*.t?z" -type f -exec cp {} $cache/packages \;
+
+    # Patch to fix not downloading 'aaa_elflibs'
+    wget $MIRROR/slackware64-14.1/slackware64/a/aaa_elflibs-14.1-x86_64-3.txz
+    mv aaa_elflibs-14.1-x86_64-3.txz $cache/packages
+
+    echo "Installing packages in $rootfs ... "
+    for package in $cache/packages/*.t?z ; do
+      installpkg -root $rootfs -terse -priority ADD $package
+    done
+
+    return 0
+
+  ) 200>/var/lock/subsys/lxc
+
+  return $?
+}
+
+
+# This function update startup script to comply with container constraints
+function update_scripts() {
+
+  local rootfs=$1
+  echo "Applying rc.6, rc.M, rc.S, rc.inet1 patches ..."
+
+  # rc.6 patch
+  cat > $rootfs/tmp/rc.6.patch <<'EOF'
+--- /etc/rc.d/rc.6.dist 2014-04-02 10:07:53.357993339 +0200
++++ /etc/rc.d/rc.6  2014-04-02 16:26:34.000000000 +0200
+@@ -9,6 +9,7 @@
+ # Author:  Miquel van Smoorenburg <miquels@drinkel.nl.mugnet.org>
+ # Modified by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+ #
++# This version is modified to run inside a lxc container.
+ 
+ # Set the path.
+ PATH=/sbin:/etc:/bin:/usr/bin
+@@ -37,21 +38,23 @@
+    ;;
+ esac
+ 
++# Disabled in Container
+ # Save the system time to the hardware clock using hwclock --systohc.
+-if [ -x /sbin/hwclock ]; then
++#if [ -x /sbin/hwclock ]; then
+   # Check for a broken motherboard RTC clock (where ioports for rtc are
+   # unknown) to prevent hwclock causing a hang:
+-  if ! grep -q -w rtc /proc/ioports ; then
+-    CLOCK_OPT="--directisa"
+-  fi
+-  if grep -q "^UTC" /etc/hardwareclock 2> /dev/null ; then
+-    echo "Saving system time to the hardware clock (UTC)."
+-    /sbin/hwclock $CLOCK_OPT --utc --systohc
+-  else
+-    echo "Saving system time to the hardware clock (localtime)."
+-    /sbin/hwclock  $CLOCK_OPT --localtime --systohc
+-  fi
+-fi
++  #if ! grep -q -w rtc /proc/ioports ; then
++  #  CLOCK_OPT="--directisa"
++  #fi
++  #if grep -q "^UTC" /etc/hardwareclock 2> /dev/null ; then
++  #  echo "Saving system time to the hardware clock (UTC)."
++  #  /sbin/hwclock $CLOCK_OPT --utc --systohc
++  #else
++  #  echo "Saving system time to the hardware clock (localtime)."
++  #  /sbin/hwclock  $CLOCK_OPT --localtime --systohc
++  #fi
++#fi
++# end container
+ 
+ # Run any local shutdown scripts:
+ if [ -x /etc/rc.d/rc.local_shutdown ]; then
+@@ -210,11 +213,13 @@
+ /sbin/swapoff -a
+ /bin/sync
+ 
+-echo "Unmounting local file systems."
+-/bin/umount -v -a -t no,proc,sysfs
+-
+-echo "Remounting root filesystem read-only."
+-/bin/mount -v -n -o remount,ro /
++# Disabled inside the container
++#echo "Unmounting local file systems."
++#/bin/umount -v -a -t no,proc,sysfs
++
++#echo "Remounting root filesystem read-only."
++#/bin/mount -v -n -o remount,ro /
++# end container
+ 
+ # This never hurts:
+ /bin/sync
+@@ -274,6 +279,10 @@
+   fi
+ fi
+ 
++# Added inside the container
++echo "Container `hostname` halted!"
++# end container
++
+ # Now halt (poweroff with APM or ACPI enabled kernels) or reboot.
+ if [ "$command" = "reboot" ]; then
+   echo "Rebooting."
+EOF
+
+
+  # rc.M patch
+  cat > $rootfs/tmp/rc.M.patch <<'EOF'
+--- /etc/rc.d/rc.M.dist 2013-10-28 06:07:17.000000000 +0100
++++ /etc/rc.d/rc.M  2014-04-01 20:00:17.000000000 +0200
+@@ -10,6 +10,7 @@
+ # Author:  Fred N. van Kempen, <waltje@uwalt.nl.mugnet.org>
+ #    Heavily modified by Patrick Volkerding <volkerdi@slackware.com>
+ #
++# This version has been updated to run inside a Lxc container!
+ 
+ # Tell the viewers what's going to happen.
+ echo "Going multiuser..."
+@@ -20,9 +21,11 @@
+   /sbin/ldconfig &
+ fi
+ 
++# Disabled inside thecontainer
+ # Screen blanks after 15 minutes idle time, and powers down in one hour
+ # if the kernel supports APM or ACPI power management:
+-/bin/setterm -blank 15 -powersave powerdown -powerdown 60
++#/bin/setterm -blank 15 -powersave powerdown -powerdown 60
++# end container
+ 
+ # Set the hostname.
+ if [ -r /etc/HOSTNAME ]; then
+EOF
+
+
+  # rc.S patch
+  cat > $rootfs/tmp/rc.S.patch <<'EOF'
+--- /etc/rc.d/rc.S.dist 2013-10-28 06:06:39.000000000 +0100
++++ /etc/rc.d/rc.S  2014-04-02 10:06:36.000000000 +0200
+@@ -4,6 +4,8 @@
+ #
+ # Mostly written by:  Patrick J. Volkerding, <volkerdi@slackware.com>
+ #
++# This version has been updated to run inside a Lxc container!
++container="lxc"
+ 
+ PATH=/sbin:/usr/sbin:/bin:/usr/bin
+ 
+@@ -19,6 +21,9 @@
+   fi
+ fi
+ 
++# Disabled inside the container
++if [ ! $container = "lxc" ]; then
++
+ # If /run exists, mount a tmpfs on it (unless the
+ # initrd has already done so):
+ if [ -d /run ]; then
+@@ -270,13 +275,17 @@
+   echo -n "Press ENTER to continue. "
+   read junk;
+ fi # Done checking root filesystem
++fi
++# end container
+ 
+ 
+ # Any /etc/mtab that exists here is old, so we start with a new one:
+ /bin/rm -f /etc/mtab{,~,.tmp} && /bin/touch /etc/mtab
+ 
++# Disabled inside the container
+ # Add entry for / to /etc/mtab:
+-/sbin/mount -f -w /
++#/sbin/mount -f -w /
++# end container
+ 
+ # Add /proc and /sys mounts to /etc/mtab:
+ if [ -d /proc/sys ]; then
+@@ -286,6 +295,9 @@
+   /sbin/mount -f sysfs /sys -t sysfs
+ fi
+ 
++# Disabled inside the container
++if [ ! $container = "lxc" ]; then
++
+ # Configure ISA Plug-and-Play devices:
+ if [ -r /etc/isapnp.conf ]; then
+   if [ -x /sbin/isapnp ]; then
+@@ -318,6 +330,8 @@
+ if [ -x /sbin/sysctl -a -r /etc/sysctl.conf ]; then
+   /sbin/sysctl -e -p /etc/sysctl.conf
+ fi
++fi
++# end container
+ 
+ # Check all the non-root filesystems:
+ if [ ! -r /etc/fastboot ]; then
+@@ -349,10 +363,12 @@
+   /sbin/mount -a -v -t nonfs,nosmbfs,nocifs,noproc,nosysfs
+ fi
+ 
++# # Disabled inside the container
+ # Enable swapping again.  This is needed in case a swapfile is used,
+ # as it can't be enabled until the filesystem it resides on has been
+ # mounted read-write.
+-/sbin/swapon -a 2> /dev/null
++#/sbin/swapon -a 2> /dev/null
++# end container
+ 
+ # Clean up some temporary files:
+ rm -f /var/run/* /var/run/*/* /var/run/*/*/* /etc/nologin \
+@@ -377,25 +393,30 @@
+ chown root:utmp /var/run/utmp
+ chmod 664 /var/run/utmp
+ 
++# Modified inside the container
+ # Update the current kernel level in the /etc/motd (Message Of The Day) file,
+ # if the first line of that file begins with the word 'Linux'.
+ # You are free to modify the rest of the file as you see fit.
+ if [ -x /bin/sed ]; then
+-  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr)\./}" /etc/motd
++  #/bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr)\./}" /etc/motd
++  /bin/sed -i "{1s/^Linux.*/$(/bin/uname -sr) lxc container\./}" /etc/motd
+ fi
++# end container
+ 
+ # If there are SystemV init scripts for this runlevel, run them.
+ if [ -x /etc/rc.d/rc.sysvinit ]; then
+   . /etc/rc.d/rc.sysvinit
+ fi
+ 
++# # Disabled inside the container
+ # Run serial port setup script:
+ # CAREFUL!  This can make some systems hang if the rc.serial script isn't
+ # set up correctly.  If this happens, you may have to edit the file from a
+ # boot disk, and/or set it as non-executable:
+-if [ -x /etc/rc.d/rc.serial ]; then
+-  sh /etc/rc.d/rc.serial start
+-fi
++#if [ -x /etc/rc.d/rc.serial ]; then
++#  sh /etc/rc.d/rc.serial start
++#fi
++#end container
+ 
+ # Carry an entropy pool between reboots to improve randomness.
+ if [ -f /etc/random-seed ]; then
+EOF
+
+
+  # rc.inet1 patch
+  cat > $rootfs/tmp/rc.inet1.patch <<'EOF'
+--- /etc/rc.d/rc.inet1.dist 2012-08-05 19:13:27.000000000 +0200
++++ /etc/rc.d/rc.inet1  2014-04-01 20:02:01.000000000 +0200
+@@ -3,6 +3,8 @@
+ # This script is used to bring up the various network interfaces.
+ #
+ # @(#)/etc/rc.d/rc.inet1 10.2  Sun Jul 24 12:45:56 PDT 2005  (pjv)
++#
++# This script has been updated to run inside a Lxc container
+ 
+ ############################
+ # READ NETWORK CONFIG FILE #
+@@ -107,14 +109,18 @@
+   done
+   # If the interface is a bridge, then create it first:
+   [ -n "${BRNICS[$i]}" ] && br_open $i
++
++  # Disabled inside the container
+   # If the interface isn't in the kernel yet (but there's an alias for it in
+   # modules.conf), then it should be loaded first:
+-  if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
+-    if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
+-      echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
+-      /sbin/modprobe ${1}
+-    fi
+-  fi
++  #if ! grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # no interface yet
++  #  if /sbin/modprobe -c | grep -v "^#" | grep -w "alias ${1}" | grep -vw "alias ${1} off" > /dev/null ; then
++  #    echo "/etc/rc.d/rc.inet1:  /sbin/modprobe ${1}" | $LOGGER
++  #    /sbin/modprobe ${1}
++  #  fi
++  #fi
++  # end container
++
+   if grep `echo ${1}: | cut -f 1 -d :`: /proc/net/dev 1> /dev/null ; then # interface exists
+     if ! /sbin/ifconfig | grep -w "${1}" 1>/dev/null || \
+       ! /sbin/ifconfig ${1} | grep -w inet 1> /dev/null ; then # interface not up or not configured
+EOF
+
+  # Apply the patches
+  ( 
+    cd $rootfs
+    patch -s -p1 < tmp/rc.6.patch ; rm tmp/rc.6.patch
+    patch -s -p1 < tmp/rc.M.patch ; rm tmp/rc.M.patch
+    patch -s -p1 < tmp/rc.S.patch ; rm tmp/rc.S.patch
+    patch -s -p1 < tmp/rc.inet1.patch ; rm tmp/rc.inet1.patch
+  )
+
+}
+
+
+# This function complete the installation after the base packages
+# are installed.
+function post_install() {
+  local hostname=$1
+  local rootfs=$2
+
+  echo "Post installation ..." ; echo
+
+  #Set Keyboard
+  cat > $rootfs/etc/rc.d/rc.keymap <<EOF 
+#!/bin/sh
+# Load the keyboard map.  More maps are in /usr/share/kbd/keymaps.
+if [ -x /usr/bin/loadkeys ]; then
+ /usr/bin/loadkeys us
+fi
+EOF
+  chmod +x $rootfs/etc/rc.d/rc.keymap
+
+  # Set the hostname
+  cat > $rootfs/etc/HOSTNAME <<EOF
+$hostname.mycompany.org
+EOF
+
+  # make needed devices, from Chris Willing's MAKEDEV.sh
+  # http://www.vislab.uq.edu.au/howto/lxc/MAKEDEV.sh
+  DEV=$rootfs/dev
+  mkdir -p ${DEV}
+  mknod -m 666 ${DEV}/null c 1 3
+  mknod -m 666 ${DEV}/zero c 1 5
+  mknod -m 666 ${DEV}/random c 1 8
+  mknod -m 666 ${DEV}/urandom c 1 9
+  mkdir -m 755 ${DEV}/pts
+  mkdir -m 1777 ${DEV}/shm
+  mknod -m 666 ${DEV}/tty c 5 0
+  mknod -m 600 ${DEV}/console c 5 1
+  mknod -m 666 ${DEV}/tty0 c 4 0
+  mknod -m 666 ${DEV}/tty1 c 4 1
+  mknod -m 666 ${DEV}/tty2 c 4 2
+  mknod -m 666 ${DEV}/tty3 c 4 3
+  mknod -m 666 ${DEV}/tty4 c 4 4
+  mknod -m 666 ${DEV}/tty5 c 4 5
+  mknod -m 666 ${DEV}/full c 1 7
+  mknod -m 600 ${DEV}/initctl p
+  mknod -m 660 ${DEV}/loop0 b 7 0
+  mknod -m 660 ${DEV}/loop1 b 7 1
+  ln -s pts/ptmx ${DEV}/ptmx
+  ln -s /proc/self/fd ${DEV}/fd
+
+
+  # Set fstab
+  echo "Adding an etc/fstab that must be edited later"
+  echo "with the full path of the container if you move it."
+  cat > $rootfs/etc/fstab <<EOF
+lxcpts $rootfs/dev/pts     devpts     defaults,newinstance  0 0
+none   $rootfs/proc        proc       defaults              0 0
+none   $rootfs/sys         sysfs      defaults              0 0
+none   /dev/shm            tmpfs      defaults              0 0
+none   /run                tmpfs      defaults,mode=0755    0 0
+EOF
+
+  # Update rc.6, rc.M, rc.S, rc.inet1 scripts to run inside container
+  update_scripts $rootfs
+
+  # Disable pointless services in a container
+  chmod -x $rootfs/etc/rc.d/rc.{udev,loop}
+
+  # Restart rc.inet1 to have routing for the loop device
+  echo "#/etc/rc.d/rc.inet1 restart" >> $rootfs/etc/rc.d/rc.local
+
+  # Reduce the number of local consoles: two should be enough
+  sed -i '/^c3\|^c4\|^c5\|^c6/s/^/# /' $rootfs/etc/inittab
+
+  # This is required for a soft shutdown
+  sed -i '/pf::powerfail/a pf:12345:powerwait:/sbin/halt' $rootfs/etc/inittab
+
+  # This is not recommended in a container
+  sed -i 's/.*genpowerfail.*//' $rootfs/etc/inittab
+
+  # Add a message to rc.local that confirms successful container startup
+  echo "echo ; echo \"* container $hostname started. *\" ; echo" >> $rootfs/etc/rc.d/rc.local
+
+  # Configure dhcp 'auto'
+  sed -i '0,/DHCP\[0\]=""/s//DHCP\[0\]="yes"/' $rootfs/etc/rc.d/rc.inet1.conf
+
+  # Removing extra lines
+  sed -i '1d' $rootfs/etc/resolv.conf
+  sed -i '16,+3d' $rootfs/etc/hosts
+
+  # Set a default combination for the luggage
+  echo "root:root" | chroot $rootfs chpasswd
+  echo "Root password is 'root', please change it!"
+
+}
+
+#
+function copy_configuration() {
+  local name=$1
+  local path=$2
+  local rootfs=$3
+  
+  cat > $path/config <<EOF
+
+# Main
+lxc.utsname = $name
+lxc.rootfs = $rootfs
+
+# Mount entries
+lxc.mount = $rootfs/etc/fstab
+
+# Network
+# Uncomment "lxc.network.link = br0" to run with bridge-utils
+# Uncomment "lxc.network.script.up = /etc/lxc/ovsup" to run with Open vSwitch
+# Uncomment "lxc.network.script.down = /etc/lxc/ovsdown" to run with Open vSwitch
+lxc.network.type = veth
+lxc.network.flags = up
+lxc.network.hwaddr = 00:aa:14:bb:22:01
+lxc.network.ipv4 = 0.0.0.0
+lxc.network.name = eth0
+#lxc.network.link = br0
+lxc.network.script.up = /etc/lxc/ovsup
+lxc.network.script.down = /etc/lxc/ovsdown
+
+
+### Common configuration
+
+# Default mount entries
+#
+
+# Default console settings
+lxc.tty = 4
+lxc.pts = 1024
+
+# Capabilities
+# Uncomment these if you don't run anything that needs the capability, and
+# would like the container to run with less privilege.
+#
+# Dropping sys_admin disables container root from doing a lot of things
+# that could be bad like re-mounting lxc fstab entries rw for example,
+# but also disables some useful things like being able to nfs mount, and
+# things that are already namespaced with ns_capable() kernel checks, like
+# hostname(1).
+# lxc.cap.drop = sys_admin
+# lxc.cap.drop = net_raw          # breaks dhcp/ping
+# lxc.cap.drop = setgid           # breaks login (initgroups/setgroups)
+# lxc.cap.drop = dac_read_search  # breaks login (pam unix_chkpwd)
+# lxc.cap.drop = setuid           # breaks sshd,nfs statd
+# lxc.cap.drop = audit_control    # breaks sshd (set_loginuid failed)
+# lxc.cap.drop = audit_write
+#
+lxc.cap.drop = mac_admin mac_override setfcap setpcap
+lxc.cap.drop = sys_module sys_nice sys_pacct
+lxc.cap.drop = sys_rawio sys_time
+
+
+# Control Group devices: all denied except those whitelisted
+lxc.cgroup.devices.deny = a
+# Allow any mknod (but not reading/writing the node)
+lxc.cgroup.devices.allow = c *:* m
+lxc.cgroup.devices.allow = b *:* m
+lxc.cgroup.devices.allow = c 1:3 rwm    # /dev/null
+lxc.cgroup.devices.allow = c 1:5 rwm    # /dev/zero
+lxc.cgroup.devices.allow = c 1:7 rwm    # /dev/full
+lxc.cgroup.devices.allow = c 5:0 rwm    # /dev/tty
+lxc.cgroup.devices.allow = c 1:8 rwm    # /dev/random
+lxc.cgroup.devices.allow = c 1:9 rwm    # /dev/urandom
+lxc.cgroup.devices.allow = c 136:* rwm  # /dev/tty[1-4] ptys and lxc console
+lxc.cgroup.devices.allow = c 5:2 rwm    # /dev/ptmx pty master
+lxc.cgroup.devices.allow = c 254:0 rwm  # /dev/rtc
+
+EOF
+
+  return 0
+}
+
+
+
+
+
+
+# Main
+set -e
+
+options=$(getopt -o hp:n:c -l help,rootfs:,path:,name:,clean -- "$@")
+if [ $? -ne 0 ]; then
+    usage $(basename $0)
+    exit 1
+fi
+
+eval set -- "$options"
+
+while true
+do
+  case "$1" in
+    -h|--help)      usage $0 && exit 0;;
+    -p|--path)      path=$2; shift 2;;
+    --rootfs)       rootfs=$2; shift 2;;
+    -n|--name)      name=$2; shift 2;;
+    -c|--clean)     clean=$2; shift 2;;
+    --)             shift 1; break ;;
+     *)             break ;;
+  esac
+done
+
+if [ ! -z "$clean" -a -z "$path" ]; then
+  clean || exit 1
+  exit 0
+fi
+
+type installpkg
+if [ $? -ne 0 ]; then
+  echo "'installpkg' command is missing."
+  exit 1
+fi
+
+if [ -z "$path" ]; then
+  echo "'path' parameter is required."
+  exit 1
+fi
+
+if [ "$(id -u)" != "0" ]; then
+  echo "This script should be run as 'root'."
+  exit 1
+fi
+
+if [ -z "$name" ]; then
+  # no name given? set a default one
+  name=slackwarecontainer
+fi
+
+
+install_slackware $rootfs
+if [ $? -ne 0 ]; then
+  echo "Failed to install slackware."
+  exit 1
+fi
+
+post_install $name $rootfs
+if [ $? -ne 0 ]; then
+  echo "Failed to complete post installation of slackware."
+  exit 1
+fi
+
+copy_configuration $name $path $rootfs
+if [ $? -ne 0 ]; then
+  echo "Failed to write configuration file."
+  exit 1
+fi
+
+#cleanup $path/rootfs
+#if [ $? -ne 0 ]; then
+#  echo "Failed to cleanup $name container."
+#  exit 1
+#fi
+
+#update_scripts $path/rootfs
+#if [ $? -ne 0 ]; then
+  #echo "Failed to update startup scripts."
+  #exit 1
+#fi
+
+#if [ ! -z $clean ]; then
+  #clean || exit 1
+  #exit 0
+#fi
+
+echo 'Build completed'
+echo 
+echo 'For the time being, localtime should be completed manually!'
+echo 'Proceed this way:'
+echo " . cd $rootfs/.. "
+echo ' . chroot rootfs'
+echo ' . timeconfig'
+echo 'Set to localtime Europe/Paris'
+echo ' '
+

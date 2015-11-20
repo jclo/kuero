@@ -1,0 +1,460 @@
+#!/bin/bash
+#
+# Kuero Container cli @#Release#@
+#
+# This script runs inside the container. It is driven by Kuero Server cli
+# script running on the server. It implements complex commands that require
+# several lines of Bash to be executed.
+#
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+readonly KUERO_CONF='kuero.conf'
+
+# Load configuration file:
+if [[ ! -f /etc/${KUERO_CONF} ]]; then
+  echo "${KUERO_VM}: configuration file ${KUERO_CONF} not found! Process aborted ..."
+  exit 1
+fi
+. /etc/${KUERO_CONF} 
+
+
+# -----------------------------------------------------------------------------
+# Private Functions
+#
+# -----------------------------------------------------------------------------
+
+# Help message
+function _help() {
+  echo ''
+  echo 'Usage: ${KUERO_VM} COMMAND [options] help'
+  echo ''
+  echo 'nodejs     #  install Node.js project'
+  echo ''
+}
+
+
+# Detailed help message
+function _cmdHelp() {
+  case $1 in
+
+    'containercustomize')
+      echo 'Still to be done...'
+      echo ''
+      ;;
+
+    'useradd')
+      echo 'Still to be done...'
+      echo ''
+      ;;
+
+    'deployproject')
+      echo 'Still to be done...'
+      echo ''
+      ;;
+
+    'startwebservice')
+      echo 'Still to be done...'
+      echo ''
+      ;;
+
+    *)
+      echo "$1 does not exist!"
+    ;;
+  esac
+  exit 1
+}
+
+
+# Add an account 'user' accessible to the 'user' "owning" the container.
+function _useradd() {
+  local user=$1
+
+  echo "Adding user ${user} to container ..."
+  useradd -m -d /home/${user} ${user}
+  echo ${user}:$(< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c8) | chpasswd
+  mkdir -p /home/${user}/.ssh
+  # Copy 'user' & root public keys to this container account.
+  echo 'Copying certificates'
+  cat /root/${user}_id_rsa.pub > /home/${user}/.ssh/authorized_keys
+  cat /root/root_id_rsa.pub >> /home/${user}/.ssh/authorized_keys
+  chown -R ${user}:${user} /home/${user}/.ssh
+  # Cleanup.
+  rm /root/root_id_rsa.pub
+  rm /root/${user}_id_rsa.pub
+}
+
+
+# Add capabilities to this container.
+function _installpackages() {
+  local type=$1
+  local PACKAGES=''
+  local CUSTOM_PACK=''
+
+  case ${type} in
+
+    'node')
+      echo 'Installing Node.js package ...'
+      CUSTOM_PACK=$NODE_PACK
+      PACKAGES=$NODE_PACKAGES
+      ;;
+
+    'html')
+      echo 'Installing Nginx package ...'
+      CUSTOM_PACK=$HTML_PACK
+      PACKAGES=$HTML_PACKAGES
+      ;;
+
+    'php')
+      echo 'Installing Nginx package ...'
+      CUSTOM_PACK=$PHP_PACK
+      PACKAGES=$PHP_PACKAGES
+      ;;
+
+    *)
+      echo "${KUERO_VM}:_installpackages(): ${type} is not supported. Aborting ..."
+      exit 1
+  esac
+
+  # Install custom slackware packages.
+  installpkg $C_PATH/$CUSTOM_PACK
+  if [ $? -ne 0 ]; then
+    echo "${KUERO_VM}: failed to install $CUSTOM_PACK. Process aborted ..."
+    exit 1
+  fi
+
+  # Install slackware packages.
+  echo 'Installing Slackware packages ...'
+  if [ ! -f /etc/slackpkg/mirrors-dist ]; then
+    mv /etc/slackpkg/mirrors /etc/slackpkg/mirrors-dist
+  fi
+  echo $MIRROR/$SUITE/ > /etc/slackpkg/mirrors
+  slackpkg -batch=on update
+
+  echo $PACKAGES > $TPATH/$TEMPLATE.template
+  slackpkg -batch=on -default_answer=y install-template $TEMPLATE
+
+}
+
+
+# Customize the container.
+function _customizecontainer() {
+  local type=$1
+
+  case ${type} in
+
+    'node')
+      # Nothing to do.
+      ;;
+
+    'html')
+      # Starting Nginx as a service.
+      chmod +x /etc/rc.d/rc.nginx
+      cat >> /etc/rc.d/rc.local <<EOF
+
+# Start Nginx server
+if [ -x /etc/rc.d/rc.nginx ]; then
+  /etc/rc.d/rc.nginx start
+fi
+EOF
+      ;;
+
+    'php')
+      # Updating php.ini
+      sed -i 's/extension=curl.so/;extension=curl.so/' /etc/httpd/php.ini
+      sed -i 's/extension=dba.so/;extension=dba.so/' /etc/httpd/php.ini
+      sed -i 's/extension=enchant.so/;extension=enchant.so/' /etc/httpd/php.ini
+      sed -i 's/extension=gd.so/;extension=gd.so/' /etc/httpd/php.ini
+      sed -i 's/extension=intl.so/;extension=intl.so/' /etc/httpd/php.ini
+      sed -i 's/extension=ldap.so/;extension=ldap.so/' /etc/httpd/php.ini
+      sed -i 's/extension=pdo_sqlite.so/;extension=pdo_sqlite.so/' /etc/httpd/php.ini
+      sed -i 's/extension=pspell.so/;extension=pspell.so/' /etc/httpd/php.ini
+      sed -i 's/extension=snmp.so/;extension=snmp.so/' /etc/httpd/php.ini
+      # Updating timezone      
+      sed -i 's/^;date.timezone.*$/date.timezone = "Europe\/Paris"/' /etc/httpd/php.ini
+
+      # Starting Nginx PHP as a service.
+      chmod +x /etc/rc.d/rc.nginx
+      chmod +x /etc/rc.d/rc.php-fpm
+      cat >> /etc/rc.d/rc.local <<EOF
+
+# Start the PHP FastCGI Process Manager daemon
+if [ -x /etc/rc.d/rc.php-fpm ]; then
+  /etc/rc.d/rc.php-fpm start
+fi
+
+# Start Nginx server
+if [ -x /etc/rc.d/rc.nginx ]; then
+  /etc/rc.d/rc.nginx start
+fi      
+EOF
+      ;;
+
+    *)
+      echo "${KUERO_VM}:_customizecontainer(): The type ${type} is not supported at all!"
+      exit 1
+      ;;
+  esac
+
+}
+
+
+# Deploy the project model.
+function _deployproject() {
+  local user=$1
+  local name=$2
+  local type=$3
+  local port=$4
+
+  case ${type} in
+
+    'node')
+      # Updating listening port.
+      sed -i "s/8000/${port}/" /home/${user}/${name}/config.js
+      ;;
+
+
+    'html')
+      # Updating listening port.
+      sed -i "s/@#port#@/${port}/" /root/nginx.conf
+      # Updating document root.
+      sed -i "s/@#location#@/\/home\/${user}\/${name}\//" /root/nginx.conf
+      cp /root/nginx.conf /etc/nginx/.
+      ;;
+
+
+    'php')
+      # Updating listening port.
+      sed -i "s/@#port#@/${port}/" /root/nginx.conf
+      # Updating document root.
+      sed -i "s/@#location#@/\/home\/${user}\/${name}\//" /root/nginx.conf
+      cp /root/nginx.conf /etc/nginx/.
+      ;;
+
+    *)
+      echo "${KUERO_VM}:_deploynodeproject(): The type ${type} is not supported at all!"
+      exit 1
+      ;;
+  esac
+
+}
+
+
+# Start the web service
+function _startwebservice() {
+  local user=$1
+  local name=$2
+  local node=$(whereis node | awk -F " " '{print $2}')
+  local nginx=$(whereis nginx | awk -F " " '{print $2}')
+  local php=$(whereis php | awk -F " " '{print $2}')
+  local type=''
+
+  # Determine the type of web service.
+  if [[ ${node} == '/usr/bin/node' ]]
+    then type='node'
+  elif [[ ${nginx} == '/usr/sbin/nginx' ]] && [[ ${php} == '' ]]
+    then type='html'
+  elif [[ ${nginx} == '/usr/sbin/nginx' ]] && [[ ${php} == '/usr/bin/php' ]]
+    then type='php'
+  else
+    type='???'
+  fi
+
+  case ${type} in
+
+    # NodeJS web service
+    'node')
+      echo 'Starting the Node.js web service ...'
+      # Start web service at user level.
+      su ${user} <<EOF
+node /home/${user}/${name}/app.js &> /dev/null &
+EOF
+      echo 'Done.'
+      ;;
+
+    # HTTP only web service.
+    'html')
+      echo 'Starting the html web service ...'
+      echo 'Done.'
+      ;;
+
+    # HTTP and PHP web service.
+    'php')
+      echo 'Starting the php web service ...'
+      echo 'Done.'
+      ;;
+
+    *)
+      echo "${KUERO_VM}:_startwebservice(): this type ${type} is unknown!"
+      exit 1
+    ;;
+  esac
+
+}
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+case $1 in
+
+  'containercustomize')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-customize() { echo 'Usage: [-t <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments
+    shift
+    while getopts "t:" opt; do
+      case ${opt} in
+        t) type=${OPTARG} ;;
+        *) _usage-customize ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided
+    if [[ -z ${type} ]]; then
+      echo "The options [t] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Customize the container.
+    case ${type} in
+
+      'node')
+        echo 'Installing Node.js packages ...'
+        _installpackages ${type} &> /dev/null       # For debugging purposes, replace '&> /dev/null' by '2>&1'
+        _customizecontainer ${type}
+        echo 'Node.js '$(node -v)' installed.'
+        ;;
+
+      'html')
+        echo 'Installing Nginx ...'
+        _installpackages ${type} &> /dev/null
+        _customizecontainer ${type}
+        echo $(nginx -v)
+        ;;
+
+      'php')
+        echo 'Installing Nginx PHP ...'
+        _installpackages ${type} &> /dev/null
+        _customizecontainer ${type}
+        echo $(nginx -v)
+        echo $(php -v)
+        ;;
+
+      *)
+        echo "${KUERO_VM}:containercustomize: The type ${type} is not supported at all!"
+        exit 1
+        ;;
+    esac
+    ;;
+
+
+  'useradd')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-useradd() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        $) _usage-useradd ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]]; then
+      echo "The options [u] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Add user
+    _useradd ${user}
+    ;;
+
+
+  'deployproject')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-deployproject() { echo 'Usage: [-u <string>] [-n <string>] [-t <string>] [-p <number>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments
+    shift
+    while getopts "u:n:t:p:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        t) type=${OPTARG} ;;
+        p) port=${OPTARG} ;;
+        *) _usage-deployproject ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided
+    if [[ -z ${user} ]] || [[ -z ${name} ]] || [[ -z ${type} ]] || [[ -z ${port} ]]; then
+      echo "The options [untp] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Deploy the project.
+    _deployproject ${user} ${name} ${type} ${port}
+    ;;
+
+
+  'startwebservice')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usage-startwebservice() { echo 'Usage: [-u <string>] [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments
+    shift
+    while getopts "u:n:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        *) _usage-startwebservice ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided
+    if [[ -z ${user} ]] || [[ -z ${name} ]]; then
+      echo "The options [un] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Start the web service.
+    _startwebservice ${user} ${name}
+    ;;
+
+
+  *)
+    _help
+    ;;
+esac
+
+#

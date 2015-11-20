@@ -1,0 +1,23 @@
+--- /etc/rc.d/rc.M.dist	2013-10-28 06:07:17.000000000 +0100
++++ /etc/rc.d/rc.M	2014-04-01 20:00:17.000000000 +0200
+@@ -10,6 +10,7 @@
+ # Author:	Fred N. van Kempen, <waltje@uwalt.nl.mugnet.org>
+ #		Heavily modified by Patrick Volkerding <volkerdi@slackware.com>
+ #
++# This version has been updated to run inside a Lxc container!
+ 
+ # Tell the viewers what's going to happen.
+ echo "Going multiuser..."
+@@ -20,9 +21,11 @@
+   /sbin/ldconfig &
+ fi
+ 
++# Disabled inside thecontainer
+ # Screen blanks after 15 minutes idle time, and powers down in one hour
+ # if the kernel supports APM or ACPI power management:
+-/bin/setterm -blank 15 -powersave powerdown -powerdown 60
++#/bin/setterm -blank 15 -powersave powerdown -powerdown 60
++# end container
+ 
+ # Set the hostname.
+ if [ -r /etc/HOSTNAME ]; then

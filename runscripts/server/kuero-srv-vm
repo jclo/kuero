@@ -1,0 +1,807 @@
+#!/bin/bash
+#
+# Kuero Server VM cli 1.2.0
+#
+# This script runs on the server and manages the containers.
+# 
+# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Redistribution and use of this script, with or without modification, is
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of this script must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#
+#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR IMPLIED
+#  WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+#  EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+#  OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+#  WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+#  OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+#  ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+readonly KUERO_CONF='kuero.conf'
+
+# Load configuration file:
+if [[ ! -f /etc/${KUERO_CONF} ]]; then
+  echo "${KUERO_SRV_VM}: configuration file ${KUERO_CONF} not found! Process aborted ..."
+  exit 1
+fi
+. /etc/${KUERO_CONF} 
+
+
+# -----------------------------------------------------------------------------
+# Private Functions
+#
+# -----------------------------------------------------------------------------
+
+# General Help message
+function _help() {
+  echo ''
+    echo 'Usage: ${KUERO_SRV_VM} COMMAND [options] help'
+    echo ''
+    echo 'info     #  provide info on a given container'
+    echo 'create   #  create a new container'
+    echo 'destroy  #  delete the container'
+    echo 'start    #  start the container'
+    echo 'stop     #  stop the container'
+    echo ''
+}
+
+
+# Detailed help message
+function _cmdHelp() {
+  case $1 in
+
+    'info')
+      echo 'Usage: [-u <string>] [-n <string>]'
+      echo '-u <user of the container>'
+      echo '-n <name of the new container>'
+      echo ''
+      ;;
+
+    'create')
+      echo 'Usage: [-u <string>] [-n <string>] [-t <string>] [-p <number>]'
+      echo '-u <user of the container>'
+      echo '-n <name of the new container>'
+      echo '-t <type of container>.'
+      echo '   html - a container running HTML/CSS/Javascript web apps'
+      echo '   node - a container running Node.js apps'
+      echo '   php  - a container running php web apps'
+      echo '-p <port>'
+      echo '   the port on which is running the web service (must be greater than 1024).'
+      echo ''
+      ;;
+
+    'destroy')
+      echo 'Usage: [-u <string>] [-n <string>]'
+      echo '-u <user of the container>'
+      echo '-n <name of the container>'
+      echo ''
+      ;;
+
+    'start')
+      echo 'Usage: [-u <string>] [-n <string>]'
+      echo '-u <user of the container>'
+      echo '-n <name of the container>'
+      ;;
+
+    'stop')
+      echo 'Usage: [-u <string>] [-n <string>]'
+      echo '-u <user of the container>'
+      echo '-n <name of the container>'
+      ;;
+
+    *)
+      echo "$1 does not exist!"
+    ;;
+  esac
+  exit 1
+}
+
+
+# Get the IP address of an active container
+_getVmIpAddress() {
+  local name=$1
+  local ip=''
+  local ips=''
+  local status=1
+
+  # Get IP from '/etc/hosts'
+  ip=$(sed -n "/$name/p" /etc/hosts | awk '{print $1}')
+
+  # Check if it's a real ip
+  if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    OIFS=$IFS
+    IFS='.'
+    ip=($ip)
+    IFS=$OIFS
+    [[ ${ip[0]} -le 255 && ${ip[1]} -le 255 && ${ip[2]} -le 255 && ${ip[3]} -le 255 ]]
+    status=$?
+  fi
+
+  if [[ $status ]]; then
+    # Return IP reformatted to string
+    printf -v ips "%s." "${ip[@]}"
+    echo ${ips%?}
+  else
+    # Alert!
+    echo "This IP $ip is improperly formatted!"
+    exit 1
+  fi
+}
+
+
+# Check if the container exists. Return port number or 0.
+function _isContainer() {
+  local user=$1
+  local name=$2
+  local port=0
+
+  # Check if the container exists.
+  declare -a CNTLIST
+  # Fill an array with all containers.
+  CNTLIST=($(lxc-ls))
+  # Parse containers (container name = user_name_port)
+  for i in "${CNTLIST[@]}"
+  do
+    declare -a CNTPARAMS
+    CNTPARAMS=(`echo $i | tr "_" "\n"`)
+    # Check if the container exists
+    if [[ ${user} == ${CNTPARAMS[0]} ]] && [[ ${name} ==  ${CNTPARAMS[1]} ]]; then
+      # container found. Save port
+      port=${CNTPARAMS[2]}
+      #echo "Container ${user}_${name}_${port} found!"
+      break
+    fi
+  done
+
+  echo ${port}
+}
+
+
+# Waiting that the Container is up and running.
+function _waitingContainerUp() {
+  local vm=$1
+  local TIME=20
+
+  echo -ne 'waiting '
+  while [[ $TIME -gt 0 ]]; do
+    ping -c 1 -t 1 ${vm} &> /dev/null
+    if [[ $? -eq 0 ]]; then
+      # Up, exit on success
+      echo ''
+      return 0
+    else
+      echo -ne '.'
+    fi
+    let TIME=TIME-1
+  done
+  # Exit on error
+  return 1
+}
+
+
+# Copy Git Project to user home dir.
+function _copyGitProject() {
+  local user=$1
+  local name=$2
+  local type=$3
+  local port=$4
+  local vm=${user}_${name}_${port}
+  local path=''
+  local app=''
+
+  case ${type} in
+
+    'node')
+      path=$NODE_PATH
+      app=$NODE_APP
+      ;;
+
+    'html')
+      path=$HTML_PATH
+      app=$HTML_APP
+      ;;
+
+    'php')
+      path=$PHP_PATH
+      app=$PHP_APP
+      ;;
+
+    *)
+      echo "${KUERO_SRV_VM}:_copyGitProject(): ${type} is not supported. Aborting ..."
+      exit 1
+    ;;
+  esac
+
+  echo "Copying ${name} git project to ${user} home."
+  cd /home/${user}
+  #tar xvf /root/packages/node/nodeapp.txz &> /dev/null
+  tar xvf ${path}/${app} &> /dev/null
+  mv ${app%.*z} ${name}
+  chown -R ${user}:${user} ${name}
+
+  # Now copy to the container.
+  echo "Cloning ${name} git project inside the container ${vm} to /home/${user} ..."
+  git clone ${name} /tmp/${name} &> /dev/null
+  rm -Rf /tmp/${name}/.git
+  scp -r /tmp/${name} ${user}@${vm}:${name}
+  rm -Rf /tmp/${name}
+  #ssh ${user}@${vm} "git clone ${name}.git ${name} && rm -Rf ${name}.git" &> /dev/null
+  echo 'Done.'
+}
+
+
+# Copy packages inside the container.
+function _copyPackagesToContainer() {
+  local user=$1
+  local name=$2
+  local type=$3
+  local port=$4
+  local vm=${user}_${name}_${port}
+
+  case ${type} in
+
+    'node')
+      cp $NODE_PATH/* $LXC_PATH/${vm}/rootfs/root/.
+      ;;
+
+    'html')
+      cp $HTML_PATH/* $LXC_PATH/${vm}/rootfs/root/.
+      ;;
+
+    'php')
+      cp $PHP_PATH/* $LXC_PATH/${vm}/rootfs/root/.
+      ;;
+
+    *)
+      echo "${KUERO_SRV_VM}:_copyPackagesToContainer(): ${type} is not supported. Aborting ..."
+      exit 1
+    ;;
+  esac
+}
+
+
+# Customize the container.
+function _customizeContainer() {
+  local user=$1
+  local name=$2
+  local type=$3
+  local port=$4
+  local vm=${user}_${name}_${port}
+
+  # Copy root and user certificates
+  mkdir -p $LXC_PATH/${vm}/rootfs/root/.ssh
+  cat /root/.ssh/id_rsa.pub > $LXC_PATH/${vm}/rootfs/root/.ssh/authorized_keys
+  # Temp location for the user & root certificates (user home doesn't exist yet!).
+  cat /root/.ssh/id_rsa.pub > $LXC_PATH/${vm}/rootfs/root/root_id_rsa.pub
+  cat /home/${user}/.ssh/id_rsa.pub > $LXC_PATH/${vm}/rootfs/root/${user}_id_rsa.pub
+
+  # Copy scripts & configuration files
+  cp /root/${KUERO_VM} $LXC_PATH/${vm}/rootfs/usr/local/sbin/${KUERO_VM}
+  chmod +x /lxc/${vm}/rootfs/usr/local/sbin/${KUERO_VM}
+
+  cp /etc/${KUERO_CONF} $LXC_PATH/${vm}/rootfs/etc/.
+
+  cp /root/${KUERO_VM_USR} $LXC_PATH/${vm}/rootfs/usr/local/bin/${KUERO_VM_USR}
+  chmod +x /lxc/${vm}/rootfs/usr/local/bin/${KUERO_VM_USR}
+
+  # Copy packages  
+  _copyPackagesToContainer ${user} ${name} ${type} ${port}
+
+  # Start the container.
+  echo "Starting container ${vm} ..."
+  lxc-start -d -n ${vm}
+  _waitingContainerUp ${vm}
+  # Check the exit code.
+  if [[ $? -eq 1 ]]; then echo "The container ${user}_${name}_${port} does not start!"; exit 1; fi;
+  lxc-info -n ${vm}
+
+  # Add capabilities to the container.
+  # Wait a bit to be sure 'ssh server' is up and running
+  sleep 5
+  ssh -o StrictHostKeyChecking=no root@${vm} "${KUERO_VM} containercustomize -t ${type}"
+  if [[ $? -eq 1 ]] ; then
+    echo 'Process aborted.'
+    exit 1
+  fi
+
+  # Create an user inside the container. 
+  ssh root@${vm} "${KUERO_VM} useradd -u ${user}"
+  if [[ $? -eq 1 ]] ; then
+    echo 'Process aborted.'
+    exit 1
+  fi
+  
+  # Deploy the reference project.
+  _copyGitProject ${user} ${name} ${type} ${port}
+  ssh root@${vm} "${KUERO_VM} deployproject -u ${user} -n ${name} -t ${type} -p ${port}"
+  if [[ $? -eq 1 ]] ; then
+    echo 'Process aborted.'
+    exit 1
+  fi
+  
+  # Stop the vm.
+  echo "Stopping container ${vm} ..."
+  lxc-stop -n ${vm}
+  wait
+  lxc-info -n ${vm}
+  echo "Done."
+  echo "The container ${vm} is ready to be used by ${user} when started."
+}
+
+
+# Update the system after the creation of a new container.
+# DNS, DHCP and Firewall.
+function _updateSystem() {
+  local user=$1
+  local name=$2
+  local port=$3
+  local vm=${user}_${name}_${port}
+  local vmip=''
+
+  # Update container name
+  sed -i "s/$CONTAINER_MASTER/${vm}/" $LXC_PATH/$vm/rootfs/etc/HOSTNAME
+
+  # Add container to dnsmasq.conf
+  sed -i "/#Virtual Servers/a dhcp-host=${vm}" /etc/dnsmasq.conf
+
+  # Add container to hosts
+  # (replace first occurence only)
+  sed -i 0,/serve[r]$/{s/serve[r]$/${vm}/} /etc/hosts
+  sed -i 0,/^#192.168.1./{s/^#192.168.1./192.168.1./} /etc/hosts
+
+  # Get vm ip
+  vmip=$(_getVmIpAddress ${vm})
+
+  # Add port forwarding to rc.firewall
+  FORWARDING='  $IPT -A FORWARD -p tcp -i $INET_IFACE --destination-port '${port}' --destination '${vmip}' -j ACCEPT'
+  PREROUTING='  $IPT -t nat -A PREROUTING -p tcp -i $INET_IFACE --destination-port '${port}' -j DNAT --to-destination '${vmip}:${port}
+
+  sed -i "/#@forward@#/a $FORWARDING" /etc/rc.d/rc.firewall
+  sed -i "/#@prerouting@#/a $PREROUTING" /etc/rc.d/rc.firewall
+
+  # Restart 'dnsmasq' and the 'firewall'
+  /etc/rc.d/rc.dnsmasq restart
+  wait
+  /etc/rc.d/rc.firewall restart &> /dev/null
+  wait
+
+}
+
+
+# Free resources after a container is deleted.
+# Remove container params from DNS, DHCP and Firewall.
+# Delete certificate.
+function _refreshSystem() {
+  local user=$1
+  local name=$2
+  local port=$3
+  local vm=${user}_${name}_${port}
+  local vmip=''
+
+  # Retrieve IP
+  vmip=$(_getVmIpAddress ${vm})
+
+  # Remove vm from the list of 'know_hosts' for 'root' and 'user'.
+  ssh-keygen -R ${vm} &> /dev/null
+  su ${user} -c "ssh-keygen -R ${vm} &> /dev/null"
+
+  # Clean 'dnsmasq.conf'
+  sed -i "/${vm}/d" /etc/dnsmasq.conf
+
+  # Clean up 'hosts'
+  # (rebuild line ; append rebuilt line ; delete old line)
+  line=$(sed -n /${vm}/p /etc/hosts | sed 's/^192/#192/' | sed "s/${vm}/server/")
+  sed -i "/${vm}/a ${line}" /etc/hosts
+  sed -i "/${vm}/d" /etc/hosts
+
+  # Clean up 'rc.firewall' (remove port forwarding)
+  sed -i "/--destination ${vmip}/d" /etc/rc.d/rc.firewall
+  sed -i "/--to-destination ${vmip}:${port}/d" /etc/rc.d/rc.firewall
+
+  # Restart 'dnsmasq' and the 'firewall'
+  /etc/rc.d/rc.dnsmasq restart
+  wait
+  /etc/rc.d/rc.firewall restart &> /dev/null
+  wait
+
+}
+
+
+# Dump info on the container.
+function _infoContainer() {
+  local user=$1
+  local name=$2
+  local port=$(_isContainer ${user} ${name})
+
+  # Check if the container exists.
+  if [[ ${port} == '0' ]]; then
+    echo "The container ${user}_${name}_... does not exist!"
+    exit 1
+  fi
+
+  # Ok Dump
+  lxc-info -n ${user}_${name}_${port}
+}
+
+
+# Create a container by cloning the master.
+function _createContainer() {
+  local user=$1
+  local name=$2
+  local type=$3
+  local port=$4
+
+  # Check if user is root.
+  if [[ ${name} == root ]]; then
+    echo "${name} is not allowed to create containers for itself!"
+  fi
+
+  # Check that this user exists!
+  if ! (awk -F ':' '{print $1}' /etc/passwd | grep -qFx "${user}")
+    then
+     echo "user account ${user} does not exist!"
+     exit 1
+  fi
+
+  # Check that the container name is valid (no underscore)
+  re='^[A-Za-z0-9]+$'
+  if ! [[ ${name} =~ $re ]] ; then
+    echo "Container name should contain alphanumeric characters only!" >&2
+    exit 1
+  fi
+
+  # Check that the requested port is a number between 1000 and 65535.
+  re='^[0-9]+$'
+  if ! [[ ${port} =~ $re ]] ; then
+    echo "${port} is not a number!" >&2
+    exit 1
+  fi
+  
+  if [[ ${port} -lt 1024 ]] || [[ ${port} -gt 65535 ]]; then
+    echo "Port ${port} is out of range. It should be >= 1024 and < 65536."
+    exit 1
+  fi
+
+  # Check that there is no container with this name and the port is not used.
+  declare -a CNTLIST
+  # Fill an array with all containers.
+  CNTLIST=($(lxc-ls))
+  # Parse containers (container name = user_name_port)
+  for i in "${CNTLIST[@]}"
+  do
+    declare -a CNTPARAMS
+    CNTPARAMS=(`echo $i | tr "_" "\n"`)
+    # Check if container name is new
+    if [[ ${user} == ${CNTPARAMS[0]} ]] && [[ ${name} ==  ${CNTPARAMS[1]} ]]; then
+      echo "Container ${name} is already in use!"
+      exit 1
+    fi
+    # Check if port is available.
+    if [[ ${port} == ${CNTPARAMS[2]} ]]; then
+      echo "The port ${port} is already in use!"
+      exit 1
+    fi
+  done
+
+  # Check if this type of container is supported.
+  MATCH=''
+  for ij in ${CONTAINER_LIST}
+  do
+    if [[ ${type} == $ij ]]; then
+      MATCH=$ij
+    fi
+  done
+  if [[ $MATCH == '' ]]; then
+    echo "The container type ${type} is not supported!"
+    exit 1
+  fi
+
+  # Clone Reference Container
+  echo 'Cloning (snapshot) master container ...'
+  lxc-clone -s -o $CONTAINER_MASTER -n ${user}_${name}_${port} &> /dev/null
+  echo "Container ${user}_${name}_${port} created."
+  _updateSystem ${user} ${name} ${port}
+
+  echo 'Customizing container ...'
+  _customizeContainer ${user} ${name} ${type} ${port}
+
+}
+
+
+# Destroy the container.
+function _destroyContainer() {
+  local user=$1
+  local name=$2
+  local port=0
+
+  # Check if the container exists.
+  declare -a CNTLIST
+  # Fill an array with all containers.
+  CNTLIST=($(lxc-ls))
+  # Parse containers (container name = user_name_port)
+  for i in "${CNTLIST[@]}"
+  do
+    declare -a CNTPARAMS
+    CNTPARAMS=(`echo $i | tr "_" "\n"`)
+    # Check if the container exists
+    if [[ ${user} == ${CNTPARAMS[0]} ]] && [[ ${name} ==  ${CNTPARAMS[1]} ]]; then
+      # container found. Save port
+      port=${CNTPARAMS[2]}
+      echo "Container ${user}_${name}_${port} found!"
+      break
+    fi
+  done
+
+  # Something found?
+  if [[ ${port} == 0 ]] ; then
+    echo "Container ${user}_${name}_... not found!"
+    exit 1
+  fi
+
+  # Verify that this container is not running.
+  if (lxc-info -n ${user}_${name}_${port} | grep -q '\sRUNNIN[G$]')
+    then
+      echo "Container ${user}_${name}_${port} is running. Stop it first!"
+      exit 1
+  fi
+
+  # Now delete it.
+  lxc-destroy -n ${user}_${name}_${port}
+  echo "Container ${user}_${name}_${port} deleted."
+  # Delete associated Git Project
+  echo "Deleting Git Project ${name} for user ${user} ..."
+  rm -Rf /home/${user}/${name}
+
+  # Free port.
+  _refreshSystem ${user} ${name} ${port}
+
+}
+
+
+# Start a container.
+function _startContainer() {
+  local user=$1
+  local name=$2
+  local port=$(_isContainer ${user} ${name})
+  local vm=${user}_${name}_${port}
+  
+  # Check if the container exists.
+  if [[ ${port} == '0' ]]; then
+    echo "The container ${user}_${name}_... does not exist!"
+    exit 1
+  fi
+
+  # Check if the container is already running.
+  if (lxc-info -n ${user}_${name}_${port} | grep -q '\sRUNNIN[G$]')
+    then
+      echo "Container ${user}_${name}_${port} is already running!"
+      exit 0
+  fi
+
+  # Ok. Start it.
+  echo "Starting ${vm} ..."
+  lxc-start -d -n ${user}_${name}_${port}
+  _waitingContainerUp ${user}_${name}_${port}
+  # Check the exit code.
+  if [[ $? -eq 1 ]]; then echo "The container ${user}_${name}_${port} does not start!"; exit 1; fi;
+  lxc-info -n ${user}_${name}_${port}
+
+  # Start the container web service.
+  ssh root@${vm} "${KUERO_VM} startwebservice -u ${user} -n ${name}"
+
+}
+
+
+# Stop a container.
+function _stopContainer() {
+  local user=$1
+  local name=$2
+  local port=$(_isContainer ${user} ${name})
+  local vm=${user}_${name}_${port}
+
+  # Check if the container exists.
+  if [[ ${port} == '0' ]]; then
+    echo "The container ${user}_${name}_... does not exist!"
+    exit 1
+  fi
+
+  # Check if the container is already running.
+  if ! (lxc-info -n ${vm} | grep -q '\sRUNNIN[G$]')
+    then
+      echo "Container ${vm} is already stopped!"
+      exit 0
+  fi
+
+  # Ok. Stop it.
+  echo "Stopping ${vm} ..."
+  lxc-stop -n ${vm}
+  wait
+  lxc-info -n ${vm}
+
+}
+
+
+
+
+# -----------------------------------------------------------------------------
+# Main section
+#
+# -----------------------------------------------------------------------------
+
+case $1 in
+
+  # Give info on a container.
+  'info')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usageInfo() { echo 'Usage: [-u <string>] [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments
+    shift
+    while getopts "u:n:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        *) _usageInfo ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided
+    if [[ -z ${user} ]] || [[ -z ${name} ]]; then
+      echo "the options [un] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Dump info.
+    _infoContainer ${user} ${name}
+    ;;
+
+
+  # Create a new container.
+  'create')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usageCreate() { echo 'Usage: [-u <string>] [-n <string>] [-t <string>] [-p <number>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:t:p:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        t) type=${OPTARG} ;;
+        p) port=${OPTARG} ;;
+        *) _usageCreate ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]] || [[ -z ${type} ]] || [[ -z ${port} ]]; then
+      echo "the options [unpt] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Create the container.
+    echo 'Start building container ...'
+    _createContainer ${user} ${name} ${type} ${port}
+    ;;
+
+
+  # Delete the given container.
+  'destroy')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message.
+    _usageDestroy() { echo 'Usage: [-u <string>] [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        *) _usageDestroy ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]]; then
+      echo "the options [un] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Ask confirmation before destroying the container.
+    while true; do
+      echo -ne "This will destroy the container ${name} that belongs to ${user}. Please confirm [Y/n]? "
+      read yn
+      case $yn in
+        [Yy]* )
+          echo 'Ok ...'
+          _destroyContainer ${user} ${name}
+          break
+          ;;
+        [Nn]* )
+          echo 'Aborting ...'
+          exit 1
+          break
+          ;;
+        * ) 
+          echo 'Please answer Yes or No.'
+          ;;
+      esac
+    done
+    ;;
+
+
+  # Start a container.
+  'start')  
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message
+    _usageStart() { echo 'Usage: [-u <string>] [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        *) _usageStart ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]]; then
+      echo "the options [un] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Start the container.
+    _startContainer ${user} ${name}
+
+    ;;
+
+
+  # Stop a container.
+  'stop')
+    if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
+
+    # Usage message.
+    _usageStop() { echo 'Usage: [-u <string>] [-n <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
+
+    # Read option arguments.
+    shift
+    while getopts "u:n:" opt; do
+      case ${opt} in
+        u) user=${OPTARG} ;;
+        n) name=${OPTARG} ;;
+        *) _usageStop ;;
+      esac
+    done
+
+    # Check if all the mandatory arguments are provided.
+    if [[ -z ${user} ]] || [[ -z ${name} ]]; then
+      echo "the options [un] are mandatory. Type help for more details."
+      exit 1
+    fi
+
+    # Well done. Stop the container.
+    _stopContainer ${user} ${name}
+    ;;
+
+
+  *)
+    _help
+    ;;
+
+esac
+
+#
