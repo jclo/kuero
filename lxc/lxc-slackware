@@ -46,7 +46,7 @@ echo "Configuring..." ; echo
 
 # The next part contains excerpts taken from SeTconfig (written by
 # Patrick Volkerding) from the slackware setup disk.
-# But before pasting them just set a variable to use them as they are
+# But before pasting them just set a variable to use them as they are 
 T_PX=$rootfs
 
 ( cd $T_PX ; chmod 755 ./ )
@@ -280,7 +280,7 @@ fi
 # clean previous installs
 rm -fR $ROOT/*
 
-slackpkg -default_answer=n update
+slackpkg -default_answer=n update 
 slackpkg install-template $TEMPLATE
 
 # add a slackpkg default mirror
@@ -394,7 +394,7 @@ case "$1" in
         -h|--help)      usage $0 && exit 0;;
         -p|--path)      path=$2; shift 2;;
 	--rootfs)       rootfs=$2; shift 2;;
-	-a|--arch)      arch=$2; shift 2;;
+	-a|--arch)      arch=$2; shift 2;; 
 	-r|--release)   release=$2; shift 2;;
 	-n|--name)      name=$2; shift 2;;
 	-c|--clean)     clean=$2; shift 2;;

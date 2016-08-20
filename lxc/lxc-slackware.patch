@@ -1,5 +1,5 @@
---- lxc-slackware	2016-08-19 11:05:44.000000000 +0200
-+++ lxc-slackware-new	2016-08-19 16:34:21.000000000 +0200
+--- lxc-slackware	2016-08-20 12:34:56.000000000 +0200
++++ lxc-slackware-new	2016-08-20 12:12:17.000000000 +0200
 @@ -27,8 +27,23 @@
  
  # Use the primary Slackware site by default, but please consider changing
@@ -24,6 +24,15 @@
  if [ -z "$arch" ]; then
  case "$( uname -m )" in
      i?86) arch=i486 ;;
+@@ -46,7 +61,7 @@
+ 
+ # The next part contains excerpts taken from SeTconfig (written by
+ # Patrick Volkerding) from the slackware setup disk.
+-# But before pasting them just set a variable to use them as they are 
++# But before pasting them just set a variable to use them as they are
+ T_PX=$rootfs
+ 
+ ( cd $T_PX ; chmod 755 ./ )
 @@ -82,7 +97,7 @@
  # /etc/rc.d/rc.inet1.conf and /etc/resolv.conf of the container
  # just set the hostname
@@ -104,6 +113,15 @@
  
  TEMPLATE=${TEMPLATE:-minimal-lxc}
  if [ ! "$TEMPLATE" = "minimal-lxc" ]; then
+@@ -280,7 +260,7 @@
+ # clean previous installs
+ rm -fR $ROOT/*
+ 
+-slackpkg -default_answer=n update 
++slackpkg -default_answer=n update
+ slackpkg install-template $TEMPLATE
+ 
+ # add a slackpkg default mirror
 @@ -296,6 +276,12 @@
    -e "s|^kernel-source|#kernel-source|" \
    $ROOT/etc/slackpkg/blacklist
@@ -248,27 +266,15 @@
  EOF
  
  if [ $? -ne 0 ]; then
-@@ -391,15 +446,15 @@
- while true
- do
- case "$1" in
--        -h|--help)      usage $0 && exit 0;;
--        -p|--path)      path=$2; shift 2;;
--	--rootfs)       rootfs=$2; shift 2;;
-+  -h|--help)      usage $0 && exit 0;;
-+  -p|--path)      path=$2; shift 2;;
-+	   --rootfs)    rootfs=$2; shift 2;;
- 	-a|--arch)      arch=$2; shift 2;;
+@@ -394,7 +449,7 @@
+         -h|--help)      usage $0 && exit 0;;
+         -p|--path)      path=$2; shift 2;;
+ 	--rootfs)       rootfs=$2; shift 2;;
+-	-a|--arch)      arch=$2; shift 2;; 
++	-a|--arch)      arch=$2; shift 2;;
  	-r|--release)   release=$2; shift 2;;
  	-n|--name)      name=$2; shift 2;;
  	-c|--clean)     clean=$2; shift 2;;
--        --)             shift 1; break ;;
--        *)              break ;;
-+     --)          shift 1; break ;;
-+  *)              break ;;
- esac
- done
- 
 @@ -430,8 +485,8 @@
  	exit 1
  fi

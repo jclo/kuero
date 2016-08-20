@@ -446,15 +446,15 @@ eval set -- "$options"
 while true
 do
 case "$1" in
-  -h|--help)      usage $0 && exit 0;;
-  -p|--path)      path=$2; shift 2;;
-	   --rootfs)    rootfs=$2; shift 2;;
+        -h|--help)      usage $0 && exit 0;;
+        -p|--path)      path=$2; shift 2;;
+	--rootfs)       rootfs=$2; shift 2;;
 	-a|--arch)      arch=$2; shift 2;;
 	-r|--release)   release=$2; shift 2;;
 	-n|--name)      name=$2; shift 2;;
 	-c|--clean)     clean=$2; shift 2;;
-     --)          shift 1; break ;;
-  *)              break ;;
+        --)             shift 1; break ;;
+        *)              break ;;
 esac
 done
 

@@ -2,7 +2,9 @@
 
 ### 14.2.x (August 20, 2016)
 
-  * Updated the scripts to comply with SpineOS 14.2.0.
+  * Updated the scripts to comply with SpineOS 14.2.0,
+  * Fixed some slight differences between this lxc-slackware and the distribution version,
+  * ...,
 
 
 ### 1.2.0 (November 20, 2015)
