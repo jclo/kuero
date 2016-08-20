@@ -48,13 +48,14 @@ function _ku_config() {
 
     'list')
       # List has no option
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
       echo "username: ${KUERO_USER}"
       echo "server: ${KUERO_SERVER}"
       echo "version: ${VERSION}"
       ;;
 
 
-    'user')  
+    'user')
       if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
       # Usage message
       _ku_usage-user() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
@@ -115,4 +116,3 @@ function _ku_config() {
   esac
 
 }
-

@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Slackware script to add DNS and DHCP capabilities to SpineOS.
-# 
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Copyright (c) 2015-2016 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -68,7 +68,7 @@ interface=br0
 
 domain-needed
 bogus-priv
- 
+
 domain=mycompany.org
 expand-hosts
 local=/mycompany.org/
@@ -77,13 +77,13 @@ local=/mycompany.org/
 server=8.8.8.8
 server=8.8.4.4
 server=208.67.220.220
- 
+
 dhcp-lease-max=255
 dhcp-authoritative
- 
+
 # DHCP Range for Virtual Servers
 dhcp-range=br0,192.168.1.10,192.168.1.199,4h
- 
+
 #Virtual Servers
 dhcp-host=core
 # end
@@ -115,7 +115,7 @@ cat >> /etc/hosts <<EOF
 # End of hosts.
 EOF
 # Update 'hostname'
-sed -i "s/HOSTNAME/`hostname`/g" /etc/hosts 
+sed -i "s/HOSTNAME/`hostname`/g" /etc/hosts
 
 # Done:
 echo 'Dnsmasq configuration completed... successfully!'

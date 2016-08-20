@@ -2,7 +2,7 @@
 #
 # Script to finalyze the installation of Kuero Server.
 #
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+# Copyright (c) 2015-2016 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -32,7 +32,7 @@ function _force_update_root_password() {
   cat > /root/.bash_profile <<EOF
 #
 # This script forces the admin user to change the admin password after the login.
-# 
+#
 
 echo ' '
 echo 'You MUST immediately change your password.'
@@ -127,7 +127,7 @@ echo "Deleting the bash history..."
 rm /root/.bash_history
 
 # Delete /tmp content:
-cd /tmp 
+cd /tmp
 find "/tmp" -type f -exec rm {} \;
 
 # Shrink disk if vmware-toolbox-cmd tool is installed:
@@ -135,14 +135,14 @@ if [[ -x "/usr/bin/vmware-toolbox-cmd" ]]; then
   echo "Shrinking the disk 3 times ..."
   vmware-toolbox-cmd disk shrink /
   vmware-toolbox-cmd disk shrink /
-  vmware-toolbox-cmd disk shrink /  
+  vmware-toolbox-cmd disk shrink /
 fi
 
 # Done:
 echo 'Kuero Server is now installed and configured... successfully!'
 echo 'Your credentials for the next login are root with the password "kuero".'
 echo 'This password expires after the first login. You need to change it'
-echo 'otherwise you cannot login anymore!'
+echo 'otherwise you cannot log in to the server anymore!'
 echo ''
 sleep 5
 halt

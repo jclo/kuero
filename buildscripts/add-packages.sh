@@ -2,7 +2,7 @@
 #
 # Script installing predefined packages on Kuero Server.
 #
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+# Copyright (c) 2015-2016 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -39,7 +39,7 @@ mkdir -p nginx
 cd nginx
 
 # Download nginx extra slackware package:
-wget ${EX_PATH}/${NGINX_PACK}
+wget ${S_OPTIONS} ${EX_PATH}/${NGINX_PACK}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download ${NGINX_PACK}. Process aborted ..."
   exit 1
@@ -52,7 +52,7 @@ mkdir -p html
 cd html
 
 # Download html app:
-wget ${EX_PATH}/${HTML_APP}
+wget ${S_OPTIONS} ${EX_PATH}/${HTML_APP}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download ${HTML_APP}. Process aborted ..."
   exit 1
@@ -75,14 +75,14 @@ mkdir -p node
 cd node
 
 # Download node extra slackware package:
-wget ${EX_PATH}/${NODE_PACK}
+wget ${S_OPTIONS} ${EX_PATH}/${NODE_PACK}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download ${NODE_PACK}. Process aborted ..."
   exit 1
 fi
 
 # Download node app:
-wget ${EX_PATH}/${NODE_APP}
+wget ${S_OPTIONS} ${EX_PATH}/${NODE_APP}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download ${NODE_APP}. Process aborted ..."
   exit 1
@@ -95,7 +95,7 @@ mkdir -p php
 cd php
 
 # Download php app:
-wget ${EX_PATH}/${PHP_APP}
+wget ${S_OPTIONS} ${EX_PATH}/${PHP_APP}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download ${PHP_APP}. Process aborted ..."
   exit 1

@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Slackware script to add LXC container capabilities to SpineOS.
-# 
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Copyright (c) 2015-2016 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -26,13 +26,13 @@
 
 # List of Slackware packages to install.
 TEMPLATE=${TEMPLATE:-lxc}
-PACKAGES=${PACKAGES:-"btrfs-progs lzo rsync"}
+PACKAGES=${PACKAGES:-"lxc libnih cgmanager btrfs-progs lzo rsync"}
 
 # Extra slackware packages.
-readonly EX_PACK="lxc-1.0.8-x86_64-2.txz"
+#readonly EX_PACK="lxc-1.0.8-x86_64-2.txz"
 
 # Scripts and configuration files.
-readonly S_LXC_TEMPLATE="lxc-slackware"
+readonly S_LXC_TEMPLATE="lxc-slackware.patch"
 readonly S_LXC_CONF="lxc.conf"
 readonly S_LXC_CONT="container.conf"
 readonly S_LXC_RC="rc.lxc"
@@ -70,27 +70,37 @@ slackpkg -batch=on -default_answer=y install-template ${TEMPLATE}
 
 
 # Download and install the extra slackware packages.
-cd /tmp
-wget ${EX_PATH}/${EX_PACK}
-if [[ $? -ne 0 ]]; then
-  echo "Failed to download $EX_PACK. Process aborted ..."
-  exit 1
-fi
-installpkg ${EX_PACK}
+#cd /tmp
+#wget ${S_OPTIONS} ${EX_PATH}/${EX_PACK}
+#if [[ $? -ne 0 ]]; then
+#  echo "Failed to download $EX_PACK. Process aborted ..."
+#  exit 1
+#fi
+#installpkg ${EX_PACK}
 # Blacklist it to prevent 'kuero upgrade server' to replace it by
 # the old lxc package (v0.9) from Slackware 14.1.
-slackpkg -batch=on -default_answer=y blacklist lxc
+#slackpkg -batch=on -default_answer=y blacklist lxc
 
 
 # Download and install the LXC Template.
-wget ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_TEMPLATE}
+#wget ${S_OPTIONS} ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_TEMPLATE}
+#if [[ $? -ne 0 ]]; then
+#  echo "Failed to download $S_LXC_TEMPLATE. Process aborted ..."
+#  exit 1
+#fi
+#mv ${S_LXC_TEMPLATE} /usr/share/lxc/templates/.
+#chmod +x /usr/share/lxc/templates/${S_LXC_TEMPLATE}
+
+# Download the patch template and apply it:
+wget ${S_OPTIONS} ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_TEMPLATE}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download $S_LXC_TEMPLATE. Process aborted ..."
   exit 1
 fi
-mv ${S_LXC_TEMPLATE} /usr/share/lxc/templates/.
-chmod +x /usr/share/lxc/templates/${S_LXC_TEMPLATE}
-
+cd /usr/share/lxc/templates/
+cp lxc-slackware lxc-slackware-distrib
+patch < /tmp/$S_LXC_TEMPLATE
+cd /tmp
 
 # Download and install the LXC System Configuration files.
 wget ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_CONF}
@@ -100,7 +110,7 @@ if [[ $? -ne 0 ]]; then
 fi
 mv ${S_LXC_CONF} /etc/lxc/.
 
-wget ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_CONT}
+wget ${S_OPTIONS} ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_CONT}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download $S_LXC_CONT. Process aborted ..."
   exit 1
@@ -111,7 +121,7 @@ mv ${S_LXC_CONT} /etc/lxc/.
 # Download and install LXC Startup and Shutdown script
 # This script is launched by 'rc.local' and 'rc.local_shutdown'.
 # It has to be declared in these two files.
-wget ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_RC}
+wget ${S_OPTIONS} ${S_OPTIONS} ${S_SERVER}/lxc/${S_LXC_RC}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download $S_LXC_RC. Process aborted ..."
   exit 1
@@ -135,9 +145,6 @@ mkfs.btrfs /dev/vg0/lxc
 # Add them to fstab.
 sed -i '1a\/dev/vg0/data    /data            ext4        defaults         0   0' /etc/fstab
 sed -i '2a\/dev/vg0/lxc     /lxc             btrfs       defaults         0   0' /etc/fstab
-
-
-
 
 #
 # Done:

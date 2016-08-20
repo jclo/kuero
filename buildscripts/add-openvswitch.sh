@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Slackware script to install Open vSwitch into SpineOS.
-# 
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Copyright (c) 2015-2016 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -26,11 +26,11 @@
 
 # List of Slackware packages to install.
 TEMPLATE=${TEMPLATE:-openvswitch}
-PACKAGES=${PACKAGES:-"gcc"}
+PACKAGES=${PACKAGES:-"gcc libcap-ng"}
 
 # Extra slackware packages.
-EX_PACK="openvswitch-2.3.2-x86_64-1_SBo.tgz"
-V_vSWITCH="2.3.2"
+EX_PACK="openvswitch-utils-2.5.0-x86_64-1_SBo.tgz"
+V_vSWITCH="2.5.0"
 
 
 echo ''
@@ -65,7 +65,7 @@ slackpkg -batch=on -default_answer=y install-template ${TEMPLATE}
 # Download and install Open vSwitch Package.
 cd /tmp
 echo 'Downloading and installing Open vSwitch ...'
-wget ${EX_PATH}/${EX_PACK}
+wget ${S_OPTIONS} ${EX_PATH}/${EX_PACK}
 if [[ $? -ne 0 ]]; then
   echo "Failed to download $P_vSWITCH. Process aborted ..."
   exit 1
@@ -94,7 +94,7 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
-ovsdb-tool create /etc/openvswitch/ovs-vswitchd.conf.db /usr/share/doc/openvswitch-${V_vSWITCH}/schema/vswitch.ovsschema
+ovsdb-tool create /etc/openvswitch/ovs-vswitchd.conf.db /usr/share/openvswitch/vswitch.ovsschema
 if [[ $? -ne 0 ]]; then
   echo "Failed to create database. Process aborted ..."
   exit 1

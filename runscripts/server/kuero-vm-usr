@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Kuero Container User cli 1.2.0
+# Kuero Container User cli 14.2.0
 #
 # This script runs inside the container at user level. It is driven by 
 # Kuero Server User cli script running on the server at user level too.

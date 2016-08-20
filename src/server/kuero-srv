@@ -30,7 +30,7 @@ if [[ ! -f /etc/${KUERO_CONF} ]]; then
   echo "${KUERO_SRV}: configuration file ${KUERO_CONF} not found! Process aborted ..."
   exit 1
 fi
-. /etc/${KUERO_CONF} 
+. /etc/${KUERO_CONF}
 
 
 # -----------------------------------------------------------------------------
@@ -113,6 +113,9 @@ function _upgradeCoreContainer() {
   mkdir -p $LXC_PATH/${core}/rootfs/root/.ssh
   cat /root/.ssh/id_rsa.pub > $LXC_PATH/${core}/rootfs/root/.ssh/authorized_keys
 
+  # Fix config otherwise the core container won't start:
+  sed -i "s/^lxc.mount.auto = /#lxc.mount.auto = /" $LXC_PATH/${core}/config
+
   # Start the container:
   echo "Starting the LXC Core Container ${core} ..."
   lxc-start -d -n ${core}
@@ -135,12 +138,12 @@ slackpkg -batch=on -default_answer=y update
 slackpkg -batch=on -default_answer=y upgrade-all
 mv /etc/slackpkg/mirrors-dist /etc/slackpkg/mirrors
 
-# Delete the curent certificates:
+# Delete the current certificates:
 cd /etc/ssh
 rm *.pub
 rm *_key
-mv ssh_config.new ssh_config
-mv sshd_config.new sshd_config
+mv ssh_config.new ssh_config &> /dev/null
+mv sshd_config.new sshd_config &> /dev/null
 rm /root/.ssh/*
 
 # Delete unusefull doc. and config files:
@@ -159,7 +162,7 @@ rm wtmp ; touch wtmp
 # Delete the history:
 rm /root/.bash_history &> /dev/null
 
-# Delete /tmp content & script: 
+# Delete /tmp content & script:
 find '/tmp' -type f -exec rm {} \; &> /dev/null
 rm /root/a.sh
 echo 'Done!'
@@ -178,6 +181,9 @@ EOF"
 
   # Remove core certificates from the known-hosts:
   sed -i "/^${core},/d" /root/.ssh/known_hosts
+
+  # Return config to it original state:
+  sed -i "s/^#lxc.mount.auto = /lxc.mount.auto = /" $LXC_PATH/${core}/config
 
   echo "Upgrade completed!"
 

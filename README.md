@@ -37,7 +37,7 @@ This password expires at the first login. You must to change it otherwise, the V
 
 ## How to use it
 
-The instructions to use this mini Heroku PaaS are available at the address: http://kuero/mobilabs/kuero-docOne.html
+The instructions to use this mini Heroku PaaS are available at the address: http://kuero/mobilabs
 
 
 ## License

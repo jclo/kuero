@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Kuero Server VM cli 1.2.0
+# Kuero Server VM cli 14.2.0
 #
 # This script runs on the server and manages the containers.
-# 
+#
 # Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
@@ -30,7 +30,7 @@ if [[ ! -f /etc/${KUERO_CONF} ]]; then
   echo "${KUERO_SRV_VM}: configuration file ${KUERO_CONF} not found! Process aborted ..."
   exit 1
 fi
-. /etc/${KUERO_CONF} 
+. /etc/${KUERO_CONF}
 
 
 # -----------------------------------------------------------------------------
@@ -274,6 +274,11 @@ function _customizeContainer() {
   local port=$4
   local vm=${user}_${name}_${port}
 
+  # First, remove the certificates that could have been copied from the core vm:
+  rm $LXC_PATH/${vm}/rootfs/etc/ssh/*.pub &> /dev/null
+  rm $LXC_PATH/${vm}/rootfs/etc/ssh/*.key &> /dev/null
+  rm -Rf $LXC_PATH/${vm}/rootfs/root/.ssh &> /dev/null
+
   # Copy root and user certificates
   mkdir -p $LXC_PATH/${vm}/rootfs/root/.ssh
   cat /root/.ssh/id_rsa.pub > $LXC_PATH/${vm}/rootfs/root/.ssh/authorized_keys
@@ -290,7 +295,7 @@ function _customizeContainer() {
   cp /root/${KUERO_VM_USR} $LXC_PATH/${vm}/rootfs/usr/local/bin/${KUERO_VM_USR}
   chmod +x /lxc/${vm}/rootfs/usr/local/bin/${KUERO_VM_USR}
 
-  # Copy packages  
+  # Copy packages
   _copyPackagesToContainer ${user} ${name} ${type} ${port}
 
   # Start the container.
@@ -310,13 +315,13 @@ function _customizeContainer() {
     exit 1
   fi
 
-  # Create an user inside the container. 
+  # Create an user inside the container.
   ssh root@${vm} "${KUERO_VM} useradd -u ${user}"
   if [[ $? -eq 1 ]] ; then
     echo 'Process aborted.'
     exit 1
   fi
-  
+
   # Deploy the reference project.
   _copyGitProject ${user} ${name} ${type} ${port}
   ssh root@${vm} "${KUERO_VM} deployproject -u ${user} -n ${name} -t ${type} -p ${port}"
@@ -324,7 +329,7 @@ function _customizeContainer() {
     echo 'Process aborted.'
     exit 1
   fi
-  
+
   # Stop the vm.
   echo "Stopping container ${vm} ..."
   lxc-stop -n ${vm}
@@ -462,7 +467,7 @@ function _createContainer() {
     echo "${port} is not a number!" >&2
     exit 1
   fi
-  
+
   if [[ ${port} -lt 1024 ]] || [[ ${port} -gt 65535 ]]; then
     echo "Port ${port} is out of range. It should be >= 1024 and < 65536."
     exit 1
@@ -504,11 +509,11 @@ function _createContainer() {
 
   # Clone Reference Container
   echo 'Cloning (snapshot) master container ...'
-  lxc-clone -s -o $CONTAINER_MASTER -n ${user}_${name}_${port} &> /dev/null
+  lxc-copy -s -n $CONTAINER_MASTER -N ${user}_${name}_${port} &> /dev/null
   echo "Container ${user}_${name}_${port} created."
   _updateSystem ${user} ${name} ${port}
 
-  echo 'Customizing container ...'
+  echo 'Customizing the container ...'
   _customizeContainer ${user} ${name} ${type} ${port}
 
 }
@@ -570,7 +575,7 @@ function _startContainer() {
   local name=$2
   local port=$(_isContainer ${user} ${name})
   local vm=${user}_${name}_${port}
-  
+
   # Check if the container exists.
   if [[ ${port} == '0' ]]; then
     echo "The container ${user}_${name}_... does not exist!"
@@ -733,7 +738,7 @@ case $1 in
           exit 1
           break
           ;;
-        * ) 
+        * )
           echo 'Please answer Yes or No.'
           ;;
       esac
@@ -742,7 +747,7 @@ case $1 in
 
 
   # Start a container.
-  'start')  
+  'start')
     if [[ $2 == 'help' ]]; then _cmdHelp $1; fi;
 
     # Usage message

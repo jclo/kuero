@@ -2,7 +2,7 @@
 
 `Nginx` isn't part of the standard Slackware packages. It must be built separately. The scripts required to build the `Nginx`packages are available on `www.slackbuilds.org`.
 
-The package we use is slighlty different from the standard package. The folder `nginx.Slackbuilds` contains the modified script we use to create the package (nginx.SlackBuild-no-perl is the mofied script while nginx.SlackBuild-dist is the default script).
+The package we use is slighlty different from the standard package. The folder `nginx.Slackbuilds` contains the modified script we use to create the package (nginx.SlackBuild-no-perl is the modified script while nginx.SlackBuild-dist is the default script).
 
 
 ## Nginx for a pure HTML/CSS/Javascript web app

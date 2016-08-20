@@ -1,15 +1,28 @@
 # Lxc
 
-This folder contains the Lxc Template required to build a minimalist version of Slackware running inside a Lxc Container.
+This folder contains the Lxc template patch required to build a minimalist version of Slackware running inside a Lxc Container.
 
-This version has been validated with `Slackware64 14.1` and `Lxc 1.0.8`.
+This version has been validated with `Slackware64 14.2` and `Lxc 2.0.1`.
 
-The folder `rc` contains the modified scripts that run into the container. These scripts are `rc.S`, `rc.M`, `rc.6` and `rc.inet1`. The folder contains the associated patches too. The patches are already included in the `lxc-slackware` file.
+## Patch
+
+`lxc-slackware` is the original template shipped with the Lxc package. `lxc-slackware-new` is the version needed for Kuero.
+
+`lxc-slackware.patch` is the patch to apply to the distribution template.
+
+The procedure to apply the patch is the following:
+
+```
+cd /usr/share/lxc/templates/
+patch < lxc-slackware.patch
+```
 
 ## Build
 
-You need to copy `lxc-slackware` into the folder `/usr/share/lxc/templates`. Then, you can build your lxc container with the command: `lxc-create -n {name} -t slackware`.
-
+Then, you can build your lxc container with the command:
+```
+lxc-create -n {name} -t slackware
+```
 
 ## Configure
 
@@ -54,25 +67,24 @@ lxc-create -n core -t slackware -B btrfs
 
 Then you can derive a new container from this one with the command:
 ```
-lxc-clone -s -o core -n myNewContainer
+lxc-copy -s -n core -N myNewContainer
 ```
 
 If you check the used memory size before and after cloning `core` you will notice almost no increase!
 
 
-### Issue with `lxc-clone`
+### Issue with `lxc-copy`
 
-`lxc-clone` updates the name of the container in the file `config` but not in the file `/etc/HOSTNAME`. This should be done manually for the time being.
+`lxc-copy` updates the name of the container in the file `config` but not in the file `/etc/HOSTNAME`. This should be done manually for the time being.
 
 
 ## Other issues
 
 From 1.0, `Lxc` authorizes the container to exchange data with the host. This feature is enabled by adding the following line to the container fstab:
 ```
-/hostDir  containerDir none bind,create=dir 
+/hostDir  containerDir none bind,create=dir
 ```
 
 `hostDir` is the absolute path to the host dir accessible to the container. `containerDir` is the relative path to `rootfs` of the container dir. `containerDir` has no  initial / because the path is relative to the container’s root.
 
-the `fstab` file must be located at the root of the container (same as config and rootfs). If it is located at `rootfs/etc/fstab` it fails to mount `hostDir` inside the container! 
-
+the `fstab` file must be located at the root of the container (same as config and rootfs). If it is located at `rootfs/etc/fstab` it fails to mount `hostDir` inside the container!

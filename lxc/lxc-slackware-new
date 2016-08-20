@@ -27,7 +27,22 @@ cache=${cache:-/var/cache/lxc/slackware}
 
 # Use the primary Slackware site by default, but please consider changing
 # this to a closer mirror site.
+SUITE=${SUITE:-14.2}
 MIRROR=${MIRROR:-http://ftp.slackware.com/pub/slackware}
+
+# This is the required set of packages for building
+# a minimal running Slackware server.
+# Thanks to Vincent Batts for this list of packages
+# http://connie.slackware.com/~vbatts/minimal/
+PACKAGES=${PACKAGES:-" \
+aaa_base aaa_elflibs aaa_terminfo bash bin bzip2 coreutils dcron dialog e2fsprogs \
+elvis etc eudev findutils gawk glibc-solibs glibc-zoneinfo grep gzip logrotate openssl-solibs \
+pkgtools procps-ng sed shadow sharutils sysklogd sysvinit sysvinit-functions sysvinit-scripts tar \
+util-linux which xz \
+diffutils slackpkg \
+mpfr \
+dhcpcd gnupg iputils net-tools network-scripts openssh wget"}
+
 
 if [ -z "$arch" ]; then
 case "$( uname -m )" in
@@ -82,7 +97,7 @@ chmod 755 $T_PX/etc/rc.d/rc.keymap
 # /etc/rc.d/rc.inet1.conf and /etc/resolv.conf of the container
 # just set the hostname
 cat <<EOF > $rootfs/etc/HOSTNAME
-$hostname.example.net
+$hostname.mycompany.org
 EOF
 cp $rootfs/etc/HOSTNAME $rootfs/etc/hostname
 
@@ -142,6 +157,16 @@ sed -i '/^c3\|^c4\|^c5\|^c6/s/^/# /' $rootfs/etc/inittab
 # container will be force stopped after a one minute timeout.
 sed -i "s,pf::powerfail:/sbin/genpowerfail start,pf::powerfail:/sbin/shutdown -h now,g" $rootfs/etc/inittab
 sed -i "s,pg::powerokwait:/sbin/genpowerfail stop,pg::powerokwait:/sbin/shutdown -c,g" $rootfs/etc/inittab
+
+# Add a message to rc.local that confirms a successful container startup:
+echo "echo ; echo \"* container $hostname started. *\" ; echo" >> $rootfs/etc/rc.d/rc.local
+
+# Configure dhcp 'auto'
+sed -i '0,/DHCP\[0\]=""/s//DHCP\[0\]="yes"/' $rootfs/etc/rc.d/rc.inet1.conf
+
+# Cleanup resolv.conf and hosts
+sed -i '1d' $rootfs/etc/resolv.conf
+sed -i '16,+3d' $rootfs/etc/hosts
 
 # set a default combination for the luggage
 echo "root:root" | chroot $rootfs chpasswd
@@ -220,52 +245,7 @@ EOF
 # thanks to Vincent Batts for this list of packages
 # (that I modified a little :P)
 # http://connie.slackware.com/~vbatts/minimal/
-cat <<EOF > $CONF/templates/minimal-lxc.template
-aaa_base
-aaa_elflibs
-aaa_terminfo
-bash
-bin
-bzip2
-coreutils
-dcron
-dhcpcd
-dialog
-diffutils
-e2fsprogs
-elvis
-etc
-eudev
-findutils
-gawk
-glibc-solibs
-gnupg
-grep
-gzip
-iputils
-logrotate
-mpfr
-net-tools
-network-scripts
-ncurses
-openssh
-openssl-solibs
-pkgtools
-procps-ng
-sed
-shadow
-sharutils
-slackpkg
-sysklogd
-sysvinit
-sysvinit-functions
-sysvinit-scripts
-tar
-util-linux
-wget
-which
-xz
-EOF
+echo ${PACKAGES} > $CONF/templates/minimal-lxc.template
 
 TEMPLATE=${TEMPLATE:-minimal-lxc}
 if [ ! "$TEMPLATE" = "minimal-lxc" ]; then
@@ -296,6 +276,12 @@ sed -i \
   -e "s|^kernel-source|#kernel-source|" \
   $ROOT/etc/slackpkg/blacklist
 
+# remove the content of '/usr/doc' and '/usr/share/locale' to reduce the
+# memory footprint of the container.
+rm -Rf $ROOT/usr/man/*
+rm -Rf $ROOT/usr/doc/*
+rm -Rf $ROOT/usr/share/locale/*
+
 return 0
 
 ) 200>/var/lock/subsys/lxc
@@ -311,37 +297,106 @@ name=$3
 
 cat <<EOF >> $path/config
 
+# Main
 lxc.utsname = $name
-
-lxc.mount = $rootfs/etc/fstab
-
-lxc.tty = 4
-lxc.pts = 1024
 lxc.rootfs = $rootfs
 
+# Mount entries
+lxc.mount = $rootfs/etc/fstab
+# cgroup, proc and sys must be mounted for the snapshots (done in the common
+# conf part below). But, the core mounts cgoup, proc and sys. The command
+# lxc.mount.core must be commented before starting a container created with
+# lxc-create otherwise an error occurs has the container tries to mount already
+# mounted entries.
+# In other words:
+#   . comment lxc.mount.auto for containers created with lxc-create
+#   . uncomment lxc.mount.auto for containers created with lxc-copy -s.
+# The command 'lxc.mount.auto' is declared in the common configuration section
+# below (Setup the default mounts).
+
+# Network
+# Uncomment "lxc.network.link = br0" to run with bridge-utils
+# Uncomment "lxc.network.script.up = /etc/lxc/ovsup" to run with Open vSwitch
+# Uncomment "lxc.network.script.down = /etc/lxc/ovsdown" to run with Open vSwitch
+lxc.network.type = veth
+lxc.network.flags = up
+lxc.network.hwaddr = 00:aa:14:bb:22:01
+lxc.network.ipv4 = 0.0.0.0
+lxc.network.name = eth0
+#lxc.network.link = br0
+lxc.network.script.up = /etc/lxc/ovsup
+lxc.network.script.down = /etc/lxc/ovsdown
+
+#
+# Common configuration
+# (this come from common.conf)
+# Default configuration shared by all containers
+
+# Setup the LXC devices in /dev/lxc/
+#lxc.devttydir = lxc
+
+# Allow for 1024 pseudo terminals
+lxc.pts = 1024
+
+# Setup 4 tty devices
+lxc.tty = 4
+
+# Drop some harmful capabilities
+lxc.cap.drop = mac_admin mac_override sys_time sys_module sys_rawio
+
+# Set the pivot directory
+lxc.pivotdir = lxc_putold
+
+# Ensure hostname is changed on clone
+lxc.hook.clone = /usr/share/lxc/hooks/clonehostname
+
+# CGroup whitelist
 lxc.cgroup.devices.deny = a
-# /dev/null and zero
-lxc.cgroup.devices.allow = c 1:3 rwm
-lxc.cgroup.devices.allow = c 1:5 rwm
-# consoles
-lxc.cgroup.devices.allow = c 5:1 rwm
-lxc.cgroup.devices.allow = c 5:0 rwm
-lxc.cgroup.devices.allow = c 4:0 rwm
-lxc.cgroup.devices.allow = c 4:1 rwm
-# /dev/{,u}random
-lxc.cgroup.devices.allow = c 1:9 rwm
-lxc.cgroup.devices.allow = c 1:8 rwm
-lxc.cgroup.devices.allow = c 136:* rwm
-lxc.cgroup.devices.allow = c 5:2 rwm
-# rtc
-lxc.cgroup.devices.allow = c 254:0 rwm
+## Allow any mknod (but not reading/writing the node)
+lxc.cgroup.devices.allow = c *:* m
+lxc.cgroup.devices.allow = b *:* m
+## Allow specific devices
+lxc.cgroup.devices.allow = c 1:3 rwm      ### /dev/null
+lxc.cgroup.devices.allow = c 1:5 rwm      ### /dev/zero
+lxc.cgroup.devices.allow = c 1:7 rwm      ### /dev/full
+lxc.cgroup.devices.allow = c 5:0 rwm      ### /dev/tty
+lxc.cgroup.devices.allow = c 5:1 rwm      ### /dev/console
+lxc.cgroup.devices.allow = c 5:2 rwm      ### /dev/ptmx
+lxc.cgroup.devices.allow = c 1:8 rwm      ### /dev/random
+lxc.cgroup.devices.allow = c 1:9 rwm      ### /dev/urandom
+lxc.cgroup.devices.allow = c 136:* rwm    ### /dev/pts/*
+lxc.cgroup.devices.allow = c 10:229 rwm   ### fuse
 
-# we don't trust even the root user in the container, better safe than sorry.
-# comment out only if you know what you're doing.
-lxc.cap.drop = sys_module mknod mac_override mac_admin sys_time setfcap setpcap
+# Setup the default mounts
+# (Mount auto is disabled here as it crashes the slackware container at boot.
+# But, it is required for the snapshots)
+lxc.mount.auto = cgroup:mixed proc:mixed sys:mixed
+lxc.mount.entry = /sys/fs/fuse/connections sys/fs/fuse/connections none bind,optional 0 0
 
-# you can try also this alternative to the line above, whatever suits you better.
-# lxc.cap.drop=sys_admin
+# Blacklist some syscalls which are not safe in privileged containers
+lxc.seccomp = /usr/share/lxc/config/common.seccomp
+
+# Lastly, include all the configs from /usr/share/lxc/config/common.conf.d/
+#lxc.include = /usr/share/lxc/config/common.conf.d/
+
+# Capabilities
+# Uncomment these if you don't run anything that needs the capability, and
+# would like the container to run with less privilege.
+#
+# Dropping sys_admin disables container root from doing a lot of things
+# that could be bad like re-mounting lxc fstab entries rw for example,
+# but also disables some useful things like being able to nfs mount, and
+# things that are already namespaced with ns_capable() kernel checks, like
+# hostname(1).
+# lxc.cap.drop = sys_admin
+# lxc.cap.drop = net_raw          # breaks dhcp/ping
+# lxc.cap.drop = setgid           # breaks login (initgroups/setgroups)
+# lxc.cap.drop = dac_read_search  # breaks login (pam unix_chkpwd)
+# lxc.cap.drop = setuid           # breaks sshd,nfs statd
+# lxc.cap.drop = audit_control    # breaks sshd (set_loginuid failed)
+# lxc.cap.drop = audit_write
+#
+lxc.cap.drop = sys_nice sys_pacct
 EOF
 
 if [ $? -ne 0 ]; then
@@ -391,15 +446,15 @@ eval set -- "$options"
 while true
 do
 case "$1" in
-        -h|--help)      usage $0 && exit 0;;
-        -p|--path)      path=$2; shift 2;;
-	--rootfs)       rootfs=$2; shift 2;;
+  -h|--help)      usage $0 && exit 0;;
+  -p|--path)      path=$2; shift 2;;
+	   --rootfs)    rootfs=$2; shift 2;;
 	-a|--arch)      arch=$2; shift 2;;
 	-r|--release)   release=$2; shift 2;;
 	-n|--name)      name=$2; shift 2;;
 	-c|--clean)     clean=$2; shift 2;;
-        --)             shift 1; break ;;
-        *)              break ;;
+     --)          shift 1; break ;;
+  *)              break ;;
 esac
 done
 
@@ -430,8 +485,8 @@ if [ "$(id -u)" != "0" ]; then
 	exit 1
 fi
 
-# If no release version was specified, use current
-release=${release:-current}
+# If no release version was specified, use defined
+release=${release:-${SUITE}}
 
 if [ -z "$name" ]; then
 	# no name given? set a default one

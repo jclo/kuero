@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Kuero Server User cli 1.2.0
+# Kuero Server User cli 14.2.0
 #
 # This script runs on the server. It can be executed by 'users' without
 # 'admin' priviledges. It is driven by Kuero cli script running on the

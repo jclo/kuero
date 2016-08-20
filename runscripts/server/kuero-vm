@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Kuero Container cli 1.2.0
+# Kuero Container cli 14.2.0
 #
 # This script runs inside the container. It is driven by Kuero Server cli
 # script running on the server. It implements complex commands that require
@@ -32,7 +32,7 @@ if [[ ! -f /etc/${KUERO_CONF} ]]; then
   echo "${KUERO_VM}: configuration file ${KUERO_CONF} not found! Process aborted ..."
   exit 1
 fi
-. /etc/${KUERO_CONF} 
+. /etc/${KUERO_CONF}
 
 
 # -----------------------------------------------------------------------------
@@ -177,16 +177,16 @@ EOF
 
     'php')
       # Updating php.ini
-      sed -i 's/extension=curl.so/;extension=curl.so/' /etc/httpd/php.ini
-      sed -i 's/extension=dba.so/;extension=dba.so/' /etc/httpd/php.ini
-      sed -i 's/extension=enchant.so/;extension=enchant.so/' /etc/httpd/php.ini
-      sed -i 's/extension=gd.so/;extension=gd.so/' /etc/httpd/php.ini
-      sed -i 's/extension=intl.so/;extension=intl.so/' /etc/httpd/php.ini
-      sed -i 's/extension=ldap.so/;extension=ldap.so/' /etc/httpd/php.ini
-      sed -i 's/extension=pdo_sqlite.so/;extension=pdo_sqlite.so/' /etc/httpd/php.ini
-      sed -i 's/extension=pspell.so/;extension=pspell.so/' /etc/httpd/php.ini
-      sed -i 's/extension=snmp.so/;extension=snmp.so/' /etc/httpd/php.ini
-      # Updating timezone      
+      sed -i 's/extension=curl.so/;extension=curl.so/' /etc/php.ini
+      sed -i 's/extension=dba.so/;extension=dba.so/' /etc/php.ini
+      sed -i 's/extension=enchant.so/;extension=enchant.so/' /etc/php.ini
+      sed -i 's/extension=gd.so/;extension=gd.so/' /etc/php.ini
+      sed -i 's/extension=intl.so/;extension=intl.so/' /etc/php.ini
+      sed -i 's/extension=ldap.so/;extension=ldap.so/' /etc/php.ini
+      sed -i 's/extension=pdo_sqlite.so/;extension=pdo_sqlite.so/' /etc/php.ini
+      sed -i 's/extension=pspell.so/;extension=pspell.so/' /etc/php.ini
+      sed -i 's/extension=snmp.so/;extension=snmp.so/' /etc/php.ini
+      # Updating timezone
       sed -i 's/^;date.timezone.*$/date.timezone = "Europe\/Paris"/' /etc/httpd/php.ini
 
       # Starting Nginx PHP as a service.
@@ -202,7 +202,7 @@ fi
 # Start Nginx server
 if [ -x /etc/rc.d/rc.nginx ]; then
   /etc/rc.d/rc.nginx start
-fi      
+fi
 EOF
       ;;
 

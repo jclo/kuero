@@ -5,7 +5,7 @@
 case "$1" in
   start)
     echo " "
-    echo "Starting Lxc containers ..."
+    echo "Starting the Lxc containers ..."
     sleep 1s
     for container in "${CONTAINERS_UP[@]}"; do
        if [ "${container}" = "${container#!}" ]; then
@@ -23,7 +23,7 @@ case "$1" in
 
   stop)
     echo " "
-    echo "Stopping containers ..."
+    echo "Stopping the containers ..."
     sleep 1s
     for container in "${CONTAINERS_DOWN[@]}"; do
       if [ "${container}" = "${container#!}" ]; then
@@ -50,4 +50,3 @@ case "$1" in
     echo "usage: $0 {start|stop|restart}"
 
 esac
-

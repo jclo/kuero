@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Kuero client cli 1.2.0
+# Kuero client cli 14.2.0
 #
 # This script runs on the client. It manages Kuero server through a set of
 # commands line.
@@ -27,7 +27,7 @@
 set -e
 
 # Define Global Constants
-readonly VERSION='1.2.0'
+readonly VERSION='14.2.0'
 readonly PRODUCTION=true
 readonly USAGE='Usage: kuero COMMAND'
 readonly BASEDIR=$(pwd)
@@ -195,13 +195,14 @@ function _ku_config() {
 
     'list')
       # List has no option
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
       echo "username: ${KUERO_USER}"
       echo "server: ${KUERO_SERVER}"
       echo "version: ${VERSION}"
       ;;
 
 
-    'user')  
+    'user')
       if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
       # Usage message
       _ku_usage-user() { echo 'Usage: [-u <string>]' 1>&2; echo 'type COMMAND help for more details'; exit 1; }
@@ -262,7 +263,6 @@ function _ku_config() {
   esac
 
 }
-
 # Manage authentication keys.
 _ku_cmd git 'manage projects'
 
@@ -483,7 +483,7 @@ function _ku_upgrade() {
   # Local variables
   local user=${KUERO_USER}
   local server=${KUERO_SERVER}
-  
+
   # Is Server Up and am I root?
   _isRemoteServerHere
   _isAdmin
@@ -499,15 +499,58 @@ function _ku_upgrade() {
     echo ''
   }
 
+  # Detailed help message
+  function _ku_cmd_help() {
+    case $1 in
+
+      'server')
+        echo 'server has no option.'
+        echo ''
+        ;;
+
+      'core')
+        echo 'core has no option.'
+        echo ''
+        ;;
+
+      *)
+        echo "$1 does not exist!"
+      ;;
+    esac
+    exit 1
+  }
+
   # main
   case $1 in
 
     'server')
-      ssh ${user}@${server} "${KUERO_SRV} upgrade -n server"
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Ask for a confirmation:
+      while true; do
+        read -p "Do you really want to upgrade the server? Please confirm [Y/n]?" yn
+        case $yn in
+          [Yy]* ) ssh ${user}@${server} "${KUERO_SRV} upgrade -n server"
+                  break;;
+          [Nn]* ) echo "Ok. The server won't be upgraded ...";
+                  break;;
+          * ) echo 'Please answer Yes or No.';;
+        esac
+      done
       ;;
 
     'core')
-      ssh ${user}@${server} "${KUERO_SRV} upgrade -n core"
+      if [[ $2 == 'help' ]]; then _ku_cmd_help $1; fi;
+      # Ask for a confirmation:
+      while true; do
+        read -p "Do you really want to upgrade the core container? Please confirm [Y/n]?" yn
+        case $yn in
+          [Yy]* ) ssh ${user}@${server} "${KUERO_SRV} upgrade -n core"
+                  break;;
+          [Nn]* ) echo "Ok. The core container won't be upgraded ...";
+                  break;;
+          * ) echo 'Please answer Yes or No.';;
+        esac
+      done
       ;;
 
     *)
@@ -517,7 +560,6 @@ function _ku_upgrade() {
   esac
 
 }
-
 # Manage the users
 _ku_cmd users 'manage users'
 

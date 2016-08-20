@@ -1,5 +1,10 @@
 # HEAD
 
+### 14.2.x (August 20, 2016)
+
+  * Updated the scripts to comply with SpineOS 14.2.0.
+
+
 ### 1.2.0 (November 20, 2015)
 
   * Moved the build scripts to Github,
