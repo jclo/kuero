@@ -3,8 +3,8 @@
 # Kuero build
 #
 # This script builds the distribution version of Kuero scripts.
-# 
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Copyright (c) 2018 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -93,7 +93,7 @@ cp $SERVER/${KUERO_CONF} $DIST/$SERVER/${KUERO_CONF}
 # Nota:
 #   The read command automatically trims leading and trailing whitespace;
 #   this can be fixed by changing its definition of whitespace by setting
-#   the IFS variable to blank. 
+#   the IFS variable to blank.
 #   'r' option avoid interpreting '\' in a line sequence.
 
 echo "Merging $CLIENT/kuero and its lib in one file ..."
@@ -112,7 +112,7 @@ while IFS='' read -r line; do
     done
 
   fi
-  
+
 done < $CLIENT/$CLIENT_IN
 
 # Set Production version to true

@@ -7,7 +7,7 @@
 # client. It implements complex commands that require several lines of
 # Bash to be executed.
 #
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+# Copyright (c) 2018 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -33,7 +33,7 @@ if [[ ! -f /etc/${KUERO_CONF} ]]; then
   echo "${KUERO_USR}: configuration file ${KUERO_CONF} not found! Process aborted ..."
   exit 1
 fi
-. /etc/${KUERO_CONF} 
+. /etc/${KUERO_CONF}
 
 
 # -----------------------------------------------------------------------------
@@ -89,7 +89,7 @@ function _gitpush() {
   if ! [[ ${port} =~ $re ]] ; then
     echo "Error. We cannot find a port number for ${user}_${name}" >&2
     exit 1
-  fi 
+  fi
 
   # Check that this vm is running.
   # (we use ping because 'lxc-info -n' isn't available at the user level)

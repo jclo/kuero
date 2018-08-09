@@ -4,7 +4,7 @@ Kuero is a mini Heroku PaaS running inside a Virtual Machine. In a similar way, 
 
 Kuero is built on top of [SpineOS](https://github.com/jclo/spineos), LXC Containers and Open vSwitch.
 
-You can find more details on the architecture and how to use it at the address: http://kuero.mobilabs.fr
+You can find more details on the architecture and how to use it at the address: https://kuero.mobilabs.fr
 
 
 ## How to build it
@@ -37,7 +37,7 @@ This password expires at the first login. You must to change it otherwise, the V
 
 ## How to use it
 
-The instructions to use this mini Heroku PaaS are available at the address: http://kuero/mobilabs
+The instructions to use this mini Heroku PaaS are available at the address: https://kuero.mobilabs.fr/kuero-doc.html
 
 
 ## License

@@ -4,8 +4,8 @@
 #
 # This script runs on the client. It manages Kuero server through a set of
 # commands line.
-# 
-# Copyright (c) 2015 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
+#
+# Copyright (c) 2018 jclo <jclo@mobilabs.fr> (http://www.mobilabs.fr/)
 #
 # Redistribution and use of this script, with or without modification, is
 # permitted provided that the following conditions are met:
@@ -76,7 +76,7 @@ function _isRemoteServerHere() {
   if ! (nc -z -w 5 $KUERO_SERVER 22 &> /dev/null)
   then
     echo 'The Remote Server is not responding. Check your config.'
-    exit 1  
+    exit 1
   fi
 }
 
@@ -125,7 +125,7 @@ function _readlink() {
       TARGET_FILE=`basename $TARGET_FILE`
   done
 
-  # Compute the canonicalized name by finding the physical path 
+  # Compute the canonicalized name by finding the physical path
   # for the directory we're in and appending the target file.
   PHYS_DIR=`pwd -P`
   RESULT=$PHYS_DIR/$TARGET_FILE
@@ -184,7 +184,7 @@ FUNC=_ku_$SUF
 # Check if the function exists.
 if [[ $(type -t $FUNC) != "function" ]]; then
   echo "$CMD is not a valid command"
-  exit 1 
+  exit 1
 fi
 
 # Execute

@@ -1,5 +1,11 @@
 # HEAD
 
+### 14.2.x (August 9, 2018)
+
+  * Fixed a wrong url link in the README,
+  * ...,
+
+
 ### 14.2.0 (August 20, 2016)
 
   * Updated the scripts to comply with SpineOS 14.2.0,
